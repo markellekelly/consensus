@@ -8,12 +8,15 @@ import sys
 stan_code = """
 functions {
 
-    array[] real additive_logistic(array[] real x){
+    array[] real additive_logistic(array[] real x, int to_print){
         // transform from R^{K-1} to the k-simplex
         int len = dims(x)[1];
         array[len+1] real transformed_arr;
         array[len] real exp_array = exp(x);
         real denominator = sum(exp_array)+1;
+        if (denominator == 0){
+            denominator = 0.000000001;
+        }
         for (i in 1:len){
             transformed_arr[i] = exp_array[i]/denominator;
         }
@@ -23,6 +26,8 @@ functions {
 
     array[] real inv_additive_logistic(array[] real x){
         // transform from the k-simplex to R^{K-1}
+        // in binary case: positive numbers correspond to more probability
+        // mass on class 0, negative on class 1
         int new_len = dims(x)[1]-1;
         array[new_len] real transformed_arr;
         real last_element = x[new_len+1];
@@ -55,9 +60,9 @@ transformed data {
     for (i in 1:n_items) {
         for (j in 1:n_models) {
             array[K-1] real transformed_arr = inv_additive_logistic(Y_M[i][j]);
+            int ind = (j-1)*(K-1);
             for (k in 1:(K-1)) {
-                int ind = (j-1)*(K-1)+k;
-                Z_M_arr[i][ind] = transformed_arr[k];
+                Z_M_arr[i][ind+k] = transformed_arr[k];
             }
         }
     }
@@ -109,11 +114,11 @@ model {
         for (j in 1:n_humans){
             vector[K] Pmf;
             array[K-1] real to_transform;
-            int ind = (K-1)*j;
+            int ind = (K-1) * (n_models + j - 1);
             for (k in 1:K-1){
                 to_transform[k] = Z[i][ind+k];
             }
-            Pmf = to_vector(additive_logistic(to_transform)); 
+            Pmf = to_vector(additive_logistic(to_transform, 0)); 
             Y_H[i,j] ~ categorical(Pmf);
         }
     }
@@ -140,6 +145,44 @@ def gen_sample_data(n_items=100, high_corr=True):
         human_pred.append([np.random.binomial(n=1, p=1-underlying_human)+1])
     return model_pred, human_pred
 
+def gen_sample_data_n5(n_items=100):
+    # two independent models, two humans correlated w/ m1, one correlated w/ m2
+    model_pred = []
+    human_pred = []
+    for _ in range(n_items):
+        underlying_model = np.random.beta(a=0.2, b=0.2)
+        underlying_model2 = np.random.beta(a=0.2, b=0.2)
+        model_pred.append([
+            [underlying_model, 1-underlying_model],
+            [underlying_model2, 1-underlying_model2]
+        ])
+        human_pred.append(
+            [np.random.binomial(n=1, p=1-underlying_model)+1,
+            np.random.binomial(n=1, p=1-underlying_model2)+1,
+            np.random.binomial(n=1, p=1-underlying_model2)+1]
+        )
+    return model_pred, human_pred
+
+def gen_sample_data_m(n_items=100):
+    # models 1 and 2 correlated, models 3 and 4 correlated, human 1 (#5) correlated with m1
+    model_pred = []
+    human_pred = []
+    for _ in range(n_items):
+        underlying_model = np.random.beta(a=0.2, b=0.2)
+        noise1 = max(0.0001, min(underlying_model - (np.random.random() * 0.001), 0.9999))
+        underlying_model2 = np.random.beta(a=0.2, b=0.2)
+        noise2 = max(0.0001, min(underlying_model2 - np.random.random() * 0.001, 0.9999))
+        model_pred.append([
+            [underlying_model, 1-underlying_model],
+            [noise1, 1-noise1],
+            [underlying_model2, 1-underlying_model2],
+            [noise2, 1-noise2]
+        ])
+        human_pred.append(
+            [np.random.binomial(n=1, p=1-underlying_model)+1]
+        )
+    return model_pred, human_pred
+
 
 def run_model(code, data, num_chains=3, num_warmup=800, num_samples=1500):
     '''build and fit model given data dict'''
@@ -160,7 +203,7 @@ def full_model(data):
     '''
     global stan_code
 
-    fit = run_model(stan_code, data, num_chains=3, num_warmup=1000, num_samples=1000)
+    fit = run_model(stan_code, data, num_chains=2, num_warmup=500, num_samples=1000)
     #stan_data = gen_arviz_data(data, fit, participants)
 
     out = fit.to_frame()
@@ -171,14 +214,17 @@ def full_model(data):
 
 if __name__ == "__main__":
 
-    fname= "test"
+    fname= "test_simple"
+    n_items = 500
+    n_humans = 3
+    n_models = 2
 
-    Y_M, Y_H = gen_sample_data(n_items=250, high_corr=False)
+    Y_M, Y_H = gen_sample_data_n5(n_items=n_items)
 
     data = {
-        "n_items": 250,
-        "n_models": 1,
-        "n_humans": 1,
+        "n_items": n_items,
+        "n_models": n_models,
+        "n_humans": n_humans,
         "K": 2,
         "Y_M": Y_M,
         "Y_H": Y_H
@@ -186,8 +232,18 @@ if __name__ == "__main__":
 
     out, waic, loo = full_model(data)
 
-    print("corr = ", np.mean(out['Omega.2.1']))
-        
+    print()
+    
+    n = n_models + n_humans
+
+    print("1----\t\t2----\t\t3----\t\t4----\t\t5----")
+    for i in range(1,n+1):
+        row = ""
+        for j in range(1,n+1):
+            corr = np.mean(out['Omega.{}.{}'.format(i,j)])
+            row += str(round(corr,3)) + "\t\t"
+        print(row)
+   
     # save results
     out.to_csv(fname + ".csv")
     # with open(fname+"_metrics.csv", "w") as f:
