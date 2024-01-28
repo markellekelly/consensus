@@ -104,7 +104,7 @@ data {
 } 
 transformed data {
 
-    // convert Y_H_r from real to int, because Stan doesn't support length-0 int arrays as data
+    // convert Y_H_new_real from real to int, because Stan doesn't support length-0 int arrays as data
     array[n_observed_humans] int<lower=1,upper=K> Y_H_new;
     if (n_observed_humans > 0) {
         for (i in 1:n_observed_humans) {
