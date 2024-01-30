@@ -129,15 +129,13 @@ transformed data {
     int len_x1 = N - len_x2; // number unobserved
 }
 parameters { 
+    // for compatibility, this block needs to contain the same parameters
+    // as those in the main model, although we only use L_Sigma here
 
     vector<lower=0>[N] L_std;
     cholesky_factor_corr[N] L_Omega;
-
-    // see https://mc-stan.org/docs/stan-users-guide/partially-known-parameters.html
     matrix[n_items,n_humans*(K-1)] Z_H;
-
     cholesky_factor_cov[N] L_Sigma;
-
     matrix[n_items, N] Z;
 }
 generated quantities {
