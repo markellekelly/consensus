@@ -37,12 +37,12 @@ def get_consensus(arr):
     return modes[0]
 
 def main():
-    rerun_model = True
+    rerun_model = False
 
     with open('cifar_10h.pickle', 'rb') as handle:
         data_dict = pickle.load(handle)
 
-    sub = 40
+    sub = 30
     mini_dict = data_dict.copy()
     mini_dict['Y_M'] = mini_dict['Y_M'][:sub]
     mini_dict['Y_H'] = mini_dict['Y_H'][:sub]
@@ -75,16 +75,19 @@ def main():
     n_humans = mini_dict['n_humans']
 
     # does choosing the max-prob expert do better than choosing a random expert?
-    n_tests = 100
+    n_tests = 200
     correct = 0
     random_correct = 0
     total = 0
     for i in range(n_tests):
-        print(i)
         mini_dict["Y_M_new"] = mini_dict["Y_M_new_list"][i]
 
         human_labels = mini_dict["Y_H_new_list"][i]
         consensus = get_consensus(human_labels)
+
+        if consensus is None:
+            print("skipping", human_labels)
+            continue
 
         quants_i = expert_model.generate_quantities(data=mini_dict, previous_fit=fit)
         probs_i = [quants_i.stan_variable("p_i_correct")[:,i].mean() for i in range(n_humans)]
@@ -96,13 +99,11 @@ def main():
             correct += 1
         if human_labels[random_expert] == consensus:
             random_correct += 1
-        if consensus is not None:
-            total += 1
+        total += 1
     
     print("random accuracy = ", random_correct/total)
     print("accuracy = ", correct/total)
         
-
 
 
 if __name__ == "__main__":
