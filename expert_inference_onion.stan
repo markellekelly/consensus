@@ -132,8 +132,8 @@ parameters {
     // for compatibility, this block needs to contain the same parameters
     // as those in the main model, although we only use L_Sigma here
 
-    vector[choose(N, 2) - 1]  l;         // do NOT init with 0 for all elements
-    vector<lower = 0,upper = 1>[N-1] R2; // first element is not really a R^2 but is on (0,1)  
+    vector<lower=0>[N] L_std;
+    cholesky_factor_corr[N] L_Omega;
     matrix[n_items,n_humans*(K-1)] Z_H;
     cholesky_factor_cov[N] L_Sigma;
     matrix[n_items, N] Z;
