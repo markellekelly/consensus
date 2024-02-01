@@ -47,10 +47,10 @@ def gen_sample_data_k3(n_items=100):
     return model_pred, human_pred
 
 def main():
-    stan_file = os.path.join(".", "model.stan")
+    stan_file = os.path.join(".", "model_onion.stan")
     model = CmdStanModel(stan_file=stan_file)
 
-    n_items = 20
+    n_items = 50
     n_humans = 3
     n_models = 2
     K = 2
@@ -62,7 +62,7 @@ def main():
         "n_models": n_models,
         "n_humans": n_humans,
         "K": K,
-       # "eta":1,
+        "eta":1,
         "Y_M": Y_M,
         "Y_H": Y_H
     }
@@ -84,13 +84,13 @@ def main():
         print(row)
 
 
-    stan_file_inf = os.path.join(".", "expert_inference.stan")
-    expert_model = CmdStanModel(stan_file=stan_file_inf)
+    stan_file_inf2 = os.path.join(".", "expert_inference_onion.stan")
+    expert_model = CmdStanModel(stan_file=stan_file_inf2)
 
     data["n_observed_humans"] = 0
     data["unobserved_ind"] = [1,2,3]
     data["n_draws"] = 1000
-    data["Y_M_new"] = [[0.1,0.9],[0.9,0.1]]
+    data["Y_M_new"] = [[0.9,0.1],[0.1,0.9]]
     data["Y_H_new_real"] = []
 
     expert_probs = expert_model.generate_quantities(data=data, previous_fit=fit)

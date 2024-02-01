@@ -109,7 +109,9 @@ parameters {
 
 }  
 transformed parameters {
-    
+
+    matrix[N,N] L_Sigma = onion(R2, l, N);
+
     matrix[n_items, N] Z;
     for (i in 1:n_items){
         for (j in 1:n_models*(K-1)){
@@ -119,8 +121,6 @@ transformed parameters {
             Z[i][k+(n_models*(K-1))] = Z_H[i][k];
         }
     }
-
-    matrix[N, N] L_Sigma = onion(R2, l, N);
 
 }
 model {
