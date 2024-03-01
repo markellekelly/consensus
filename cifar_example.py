@@ -5,15 +5,15 @@ from cmdstanpy import CmdStanModel, from_csv
 import numpy as np
 
 
-def estimate_sigma(data_dict):
+def estimate_sigma(data_dict, fname=None, chains=3, iter_warmup=500, iter_sampling=1000):
     stan_file = os.path.join(".", "model_onion.stan")
     model = CmdStanModel(stan_file=stan_file)
 
     fit = model.sample(
         data=data_dict, 
-        chains=3, 
-        iter_warmup=800, 
-        iter_sampling=1500, 
+        chains=chains, 
+        iter_warmup=iter_warmup, 
+        iter_sampling=iter_sampling, 
         show_console=False
     )
 
@@ -23,7 +23,8 @@ def estimate_sigma(data_dict):
     # with open('cifar_fit3.pickle', 'wb') as handle:
     #     pickle.dump(fit, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
-    fit.save_csvfiles('cifar_fits/fit_800_1500_40')
+    if fname:
+        fit.save_csvfiles('cifar_fits/'+fname)
 
     return fit
 
@@ -42,64 +43,145 @@ def main():
     with open('cifar_10h.pickle', 'rb') as handle:
         data_dict = pickle.load(handle)
 
-    sub = 30
+    n_items = 500
     mini_dict = data_dict.copy()
-    mini_dict['Y_M'] = mini_dict['Y_M'][:sub]
-    mini_dict['Y_H'] = mini_dict['Y_H'][:sub]
-    mini_dict['n_items'] = sub
+    mini_dict['Y_M'] = mini_dict['Y_M'][:n_items]
+    mini_dict['Y_H'] = mini_dict['Y_H'][:n_items]
+    mini_dict['n_items'] = n_items
     mini_dict['eta'] = 1
+
+    K = data_dict["K"]
+
+    chains=5
+    iter_warmup=1500
+    iter_sampling=2000
+
+    fname = "fit_{}_{}_{}".format(iter_warmup, iter_sampling, n_items)
 
     n = (data_dict['n_models'] + data_dict['n_humans'])*(data_dict['K'] - 1)
 
     if rerun_model:
-        fit = estimate_sigma(mini_dict)
+        fit = estimate_sigma(mini_dict, fname, chains, iter_warmup, iter_sampling)
     else:
-        fit = from_csv(path='cifar_fits/fit_800_1500_40', method='sample')
+        fit = from_csv(path='cifar_fits/'+fname, method='sample')
 
-    stan_file_inf = os.path.join(".", "expert_inference_onion.stan")
+    Sigma_estimate = np.zeros((n,n))
+    for i in range(n):
+        for j in range(n):
+            Sigma_estimate[i][j] = fit.stan_variable("Sigma")[:,i,j].mean()
+
+    stan_file_inf = os.path.join(".", "simulate_y.stan")
     expert_model = CmdStanModel(stan_file=stan_file_inf)
 
-    mini_dict["n_observed_humans"] = 0
-    mini_dict["unobserved_ind"] = [i for i in range(1, mini_dict["n_humans"] + 1)]
-    mini_dict["n_draws"] = 1000
-    mini_dict["Y_M_new"] = mini_dict["Y_M_new_list"][0]
-    mini_dict["Y_H_new_real"] = []
+    exp_dict = {
+        "n_models" : data_dict['n_models'],
+        "n_humans" : data_dict['n_humans'],
+        "K" : K,
+        "Sigma" : Sigma_estimate,
+        "n_observed_humans" : 1,
+        "unobserved_ind" : [i for i in range(1, mini_dict["n_humans"] + 1)],
+        "n_draws" : 500,
+        "simulate_y" : 1
+    }
 
-    Y_H_ground_truth = mini_dict["Y_H_new_list"][0]
+    # expert_probs = expert_model.generate_quantities(data=mini_dict, previous_fit=fit)
 
-    expert_probs = expert_model.generate_quantities(data=mini_dict, previous_fit=fit)
+    # probs_df = expert_probs.draws_pd()
+    # probs_df.to_csv('cifar_probs.csv')
 
-    probs_df = expert_probs.draws_pd()
-    probs_df.to_csv('cifar_probs.csv')
+    n_humans = data_dict['n_humans']
 
-    n_humans = mini_dict['n_humans']
+    stan_file_i = os.path.join(".", "simulate_y.stan")
+    stan_file_z = os.path.join(".", "estimate_z.stan")
 
     # does choosing the max-prob expert do better than choosing a random expert?
-    n_tests = 200
+    n_tests = 250
     correct = 0
     random_correct = 0
-    total = 0
-    for i in range(n_tests):
-        mini_dict["Y_M_new"] = mini_dict["Y_M_new_list"][i]
+    total = 0; i=0
+    while total < n_tests:
 
-        human_labels = mini_dict["Y_H_new_list"][i]
+        print(total)
+        exp_dict["Y_M_new"] = data_dict["Y_M_new_list"][i]
+
+        human_labels = data_dict["Y_H_new_list"][i]
         consensus = get_consensus(human_labels)
 
         if consensus is None:
-            print("skipping", human_labels)
+            i+=1
             continue
 
-        quants_i = expert_model.generate_quantities(data=mini_dict, previous_fit=fit)
-        probs_i = [quants_i.stan_variable("p_i_correct")[:,i].mean() for i in range(n_humans)]
-        chosen_expert = np.argmax(probs_i)
+        if human_labels[0]==human_labels[1] and human_labels[2]==human_labels[1]:
+            i+=1
+            continue
+
+        # estimate z_U^H (todo: use simulate_y if n_observed > 0)
+        model_z = CmdStanModel(stan_file=stan_file_z)
+
+        z_dict = {
+            "n_models": data_dict['n_models'],
+            "n_humans": data_dict['n_humans'],
+            "K": K,
+            "Sigma": Sigma_estimate,
+            "Y_M_new": data_dict["Y_M_new_list"][i]
+        }
+
+        fit_z = model_z.sample(
+            data=z_dict, 
+            chains=3, 
+            iter_warmup=500, 
+            iter_sampling=750, 
+            show_console=False
+        )
+
+        latent_probs = np.zeros((n_humans,K))
+        for h in range(n_humans):
+            for j in range(K):
+                latent_probs[h][j] = fit_z.stan_variable("latent_probs")[:,h,j].mean()
+
+
+        #observed_expert = np.random.choice(range(n_humans))
+        exp_dict["Y_M_new"] = data_dict["Y_M_new_list"][i]
+
+        expected_entropy = [0]*n_humans
+
+        for expert_ind in range(n_humans):
+            for expert_pred in range(K):
+                model_i = CmdStanModel(stan_file=stan_file_i)
+
+                exp_dict["Y_H_new_real"] = [expert_pred+1]
+                exp_dict["n_observed_humans"] = 1
+                exp_dict["unobserved_ind"] = [i+1 for i in range(n_humans) if i != expert_ind]
+
+                fit_i = model_i.sample(
+                    data=exp_dict, 
+                    chains=3, 
+                    iter_warmup=500, 
+                    iter_sampling=750, 
+                    show_console=False
+                )
+
+                neg_entropy = 0
+                for k in range(K):
+                    p_y_k = fit_i.stan_variable("p_y")[:,k].mean()
+                    neg_entropy += p_y_k * np.log(p_y_k)
+                
+                expected_entropy[expert_ind] += -1*neg_entropy * latent_probs[expert_ind][k]
+
+        # print(human_labels)
+
+        chosen_expert = np.argmin(expected_entropy)
 
         random_expert = np.random.choice(range(n_humans))
 
-        if human_labels[chosen_expert]==consensus:
+        # print('chosen:', chosen_expert)
+        # print('random:', random_expert)
+
+        if human_labels[chosen_expert] == consensus:
             correct += 1
         if human_labels[random_expert] == consensus:
             random_correct += 1
-        total += 1
+        total += 1; i+=1
     
     print("random accuracy = ", random_correct/total)
     print("accuracy = ", correct/total)
