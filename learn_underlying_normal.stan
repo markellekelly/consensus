@@ -32,6 +32,26 @@ functions {
         return transformed_arr;
     }
 
+    matrix onion(vector R2, vector l, int N) {
+        matrix[N,N] L;
+        int start = 1;
+        int end = 2;
+
+        L[1,1] = 1.0;
+        L[2,1] = 2.0 * R2[1] - 1.0;
+        L[2,2] = sqrt(1.0 - square(L[2,1]));
+        for(k in 2:(N-1)) {
+            int kp1 = k + 1;
+            vector[k] l_row = segment(l, start, k);
+            real scale = sqrt(R2[k] / dot_self(l_row));
+            for(j in 1:k) L[kp1,j] = l_row[j] * scale;
+            L[kp1,kp1] = sqrt(1.0 - R2[k]);
+            start = end + 1;
+            end = start + k - 1;
+        }
+        return L;
+    }
+
 }
 data {
 
@@ -45,6 +65,8 @@ data {
 
     // human predictions: votes (\in {1, ... K})
     array[n_items,n_humans] int<lower=1,upper=K> Y_H;
+
+    real<lower = 0> eta;
 
 } 
 transformed data {
@@ -64,20 +86,34 @@ transformed data {
 
     int N = (K-1)*(n_models + n_humans);
 
+    real<lower = 0> alpha = eta + (N - 2) / 2.0;
+    vector<lower = 0>[N-1] shape1;
+    vector<lower = 0>[N-1] shape2;
+
+    shape1[1] = alpha;
+    shape2[1] = alpha;
+    for(n in 2:(N-1)) {
+        alpha = alpha - 0.5;
+        shape1[n] = n / 2.0;
+        shape2[n] = alpha;
+  }
+
 }
 parameters { 
 
-    vector<lower=0>[N] L_std;
-    cholesky_factor_corr[N] L_Omega;
+    vector[choose(N, 2) - 1]  l;         // do NOT init with 0 for all elements
+    vector<lower = 0,upper = 1>[N-1] R2; // first element is not really a R^2 but is on (0,1)  
 
+    row_vector[N] mu;
+    
     // see https://mc-stan.org/docs/stan-users-guide/partially-known-parameters.html
     matrix[n_items,n_humans*(K-1)] Z_H;
 
 }  
 transformed parameters {
 
-    cholesky_factor_cov[N] L_Sigma = diag_pre_multiply(L_std, L_Omega);
-    
+    matrix[N,N] L_Sigma = onion(R2, l, N);
+
     matrix[n_items, N] Z;
     for (i in 1:n_items){
         for (j in 1:n_models*(K-1)){
@@ -91,18 +127,17 @@ transformed parameters {
 }
 model {
 
-    L_Omega ~ lkj_corr_cholesky(1);
-    L_std ~ normal(0, 0.5);
+    // priors for parameters
+    l ~ normal(0.0, 1.0);
+    R2 ~ beta(shape1, shape2);
+    mu ~ normal(0.0, 0.1);
     
-    // fix mu at 0
-    row_vector[N] mu;
-    mu = rep_row_vector(0, N);
-
+    // likelihood of latent scores
     for (i in 1:n_items){
         Z[i] ~ multi_normal_cholesky(mu, L_Sigma);
     }
 
-    // get human one-hot predictions from latent categorical dist
+    // likelihood of (human) votes from latent scores
     for (i in 1:n_items){
         for (j in 1:n_humans){
             vector[K] Pmf;
@@ -119,10 +154,12 @@ model {
 }
 generated quantities {
 
+    // covariance matrix
     matrix[N,N] Sigma;
     Sigma = multiply_lower_tri_self_transpose(L_Sigma);
 
-    matrix[N,N] Omega;
-    Omega = multiply_lower_tri_self_transpose(L_Omega);
+    // correlation matrix
+    // matrix[N,N] Omega;
+    // Omega = multiply_lower_tri_self_transpose(L_Omega);
 
 }
