@@ -162,11 +162,8 @@ data {
 
     int<lower=1> n_models;
     int<lower=1> n_humans;
+    int<lower=1> n_items;
     int<lower=1> K; 
-
-    matrix[(K-1)*(n_models + n_humans),(K-1)*(n_models + n_humans)] Sigma;
-
-    row_vector[(K-1)*(n_models + n_humans)] mu;
 
     int<lower=0> n_observed_humans;
 
@@ -229,8 +226,24 @@ transformed data {
     // sizes for the conditional Gaussian | Z_M
     int s1 = n_humans*(K-1); // first block: unobserved (to estimate)
     int s2 = n_models*(K-1); // second block: observed (to condition on)
+} 
+parameters {
+    // parameters from learn_underlying_normal (for compatibility)
+    vector[choose(N, 2) - 1]  l; 
+    vector<lower = 0,upper = 1>[N-1] R2; 
+
+    row_vector[N] mu;
+    // see https://mc-stan.org/docs/stan-users-guide/partially-known-parameters.html
+    matrix[n_items,n_humans*(K-1)] Z_H;
+
+    matrix[N,N] L_Sigma;
+    matrix[n_items, N] Z;
 }
 generated quantities {
+
+    // covariance matrix
+    matrix[N,N] Sigma;
+    Sigma = multiply_lower_tri_self_transpose(L_Sigma);
 
     // reorder mu and Sigma so that the unobserved (human) predictions come first
     array[n_models + n_humans] int new_order = append_array(human_ind, model_ind); 
@@ -256,7 +269,7 @@ generated quantities {
 
 
     // draw Z_H from the conditional Gaussian | Z_M
-    vector[s1] Z_H = multi_normal_rng(mu_cond, Sigma_cond);
+    vector[s1] Z_H_draw = multi_normal_rng(mu_cond, Sigma_cond);
 
     // draw sampled votes for the unobserved humans Y_U | Z_U
     // also, record transformed Z_H for computing expected entropty
@@ -264,7 +277,7 @@ generated quantities {
     array[n_unobserved_humans] int<lower=1,upper=K> Y_U;
     int j = 1;
     for (i in 1:n_humans) {
-        array[K-1] real Z_i = to_array_1d(segment(Z_H, ((K-1)*(i-1))+1, K-1));
+        array[K-1] real Z_i = to_array_1d(segment(Z_H_draw, ((K-1)*(i-1))+1, K-1));
         vector[K] Pmf = to_vector(additive_logistic(Z_i)); 
         // record transformed Z_U
         for (l_ind in 1:K) {
@@ -287,7 +300,7 @@ generated quantities {
        // weight p_y_k by likelihood of Y_O | Z_O
         for (i in 1:n_humans) {
             if (i_in(i+n_models, observed_true_ind)) {
-                array[K-1] real Z_i = to_array_1d(segment(Z_H, (K-1)*(i-1)+1, K-1));
+                array[K-1] real Z_i = to_array_1d(segment(Z_H_draw, (K-1)*(i-1)+1, K-1));
                 vector[K] Pmf = to_vector(additive_logistic(Z_i)); 
                 p_y_k *= Pmf[y_mode];
             }
