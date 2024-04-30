@@ -95,10 +95,29 @@ def choose_expert(mvn_fit, consensus_model, exp_dict):
 
         candidate_ees[c] = expected_entropy
 
-    chosen_expert = max(candidate_ees, key=candidate_ees.get)
+    chosen_expert = min(candidate_ees, key=candidate_ees.get)
     insertion_point = bisect(observed_ind, chosen_expert-1)
     return chosen_expert, candidate_ees, insertion_point
 
+
+def query_random_human(fit, consensus_model, exp_dict, human_labels):
+    observed_ind = [i for i in range(1, exp_dict['n_humans']+1) if i not in exp_dict["unobserved_ind"]]
+    if len(exp_dict["unobserved_ind"])>1:
+        chosen_expert = np.random.choice(exp_dict["unobserved_ind"])
+    else:
+        chosen_expert = exp_dict["unobserved_ind"][0]
+    insert_at = bisect(observed_ind, chosen_expert-1)
+
+    # "query" chosen expert
+    exp_dict["n_observed_humans"] += 1
+    exp_dict["unobserved_ind"] = [i for i in exp_dict["unobserved_ind"] if i!=chosen_expert]
+    Y_O_new = exp_dict["Y_O_real"].copy()
+    Y_O_new.insert(insert_at, human_labels[chosen_expert-1])
+    exp_dict["Y_O_real"] = Y_O_new
+
+    sampled_consensus_dist = consensus_dist(fit, consensus_model, exp_dict)
+    pred_y = np.argmax(sampled_consensus_dist) + 1
+    return exp_dict, pred_y
 
 def query_next_human(fit, consensus_model, exp_dict, human_labels):
     if len(exp_dict["unobserved_ind"])>1:
@@ -146,14 +165,14 @@ def main():
     n_warmup= 500 #1500
     n_sampling= 800 #2000
 
-    n_items = 200 #500
+    n_items = 100 #500
     mini_dict = data_dict.copy()
     mini_dict['Y_M'] = mini_dict['Y_M'][:n_items]
     mini_dict['Y_H'] = mini_dict['Y_H'][:n_items]
     mini_dict['n_items'] = n_items
     mini_dict['eta'] = 1
 
-    fname = "fit_{}_{}_{}".format(n_warmup, n_sampling, n_items)
+    fname = "fit_{}_{}_{}-ts".format(n_warmup, n_sampling, n_items)
 
     n_humans = data_dict['n_humans']
     n = (data_dict['n_models'] + n_humans)*(data_dict['K'] - 1)
@@ -175,10 +194,10 @@ def main():
         "Y_O_real": [],
     }
 
-    n_tests = 100*4
-    total = 0; i=-1
+    n_tests = 25*4
+    total = 0; i=180
     correct = 0; random_correct = 0
-    test_results = []; random_results = []
+    test_results = []; hybrid_results = []; random_results = []
 
     while total < n_tests:
 
@@ -201,10 +220,12 @@ def main():
         exp_dict['n_observed_humans'] = 0
         exp_dict["Y_O_real"] = []
         exp_dict['unobserved_ind'] = [i for i in range(1, n_humans+1)]
+        exp_dict_alt = exp_dict.copy()
 
         random_candidate_experts = [i for i in range(n_humans)]
         random_labels = []
         test_result = []
+        hybrid_result = []
         random_result = []
 
         model_only_cd = consensus_dist(fit, consensus_model, exp_dict)
@@ -213,9 +234,11 @@ def main():
 
         if pred_y == consensus:
             test_result.append(1)
+            hybrid_result.append(1)
             correct += 1
         else:
             test_result.append(0)
+            hybrid_result.append(0)
         if naive_pred_y == consensus:
             random_result.append(1)
             random_correct += 1
@@ -223,8 +246,10 @@ def main():
             random_result.append(0)
         total+=1
 
+        print('human labels: ' + str(human_labels))
+
         print("chosen:", pred_y)
-        print("random:", naive_pred_y)
+        print("random/model prediction:", naive_pred_y)
         print("actual:", consensus)
 
         for _ in range(n_humans):
@@ -236,10 +261,13 @@ def main():
 
             exp_dict, pred_y = query_next_human(fit, consensus_model, exp_dict, human_labels)
 
+            exp_dict_alt, hybrid_pred_y = query_random_human(fit, consensus_model, exp_dict_alt, human_labels)
+
             _, modes = get_consensus(random_labels)
             naive_pred_y = np.random.choice(modes)
 
             print("chosen:", pred_y)
+            print("hybrid:", hybrid_pred_y)
             print("random:", naive_pred_y)
             print("actual:", consensus)
 
@@ -248,6 +276,10 @@ def main():
                 correct += 1
             else:
                 test_result.append(0)
+            if hybrid_pred_y == consensus:
+                hybrid_result.append(1)
+            else:
+                hybrid_result.append(0)
             if naive_pred_y == consensus:
                 random_result.append(1)
                 random_correct += 1
@@ -260,12 +292,16 @@ def main():
         
         test_results.append(test_result)
         random_results.append(random_result)
+        hybrid_results.append(hybrid_result)
 
         print("random accuracy = ", random_correct/total)
         print("accuracy = ", correct/total)
 
         random_df = pd.DataFrame(random_results)
         random_df.to_csv("random_results.csv")
+
+        hybrid_df = pd.DataFrame(hybrid_results)
+        hybrid_df.to_csv("hybrid_results.csv")
 
         test_df = pd.DataFrame(test_results)
         test_df.to_csv("test_results.csv")

@@ -1,15 +1,14 @@
 
 functions {
-
     array[] real additive_logistic(array[] real x){
         // transform from R^{K-1} to the k-simplex
         int len = dims(x)[1];
         array[len+1] real transformed_arr;
         array[len] real exp_array = exp(x);
         real denominator = sum(exp_array)+1;
-        if (denominator == 0){
-            denominator = 0.000000001;
-        }
+        // if (denominator == 0){
+        //     denominator = 0.000000001;
+        // }
         for (i in 1:len){
             transformed_arr[i] = exp_array[i]/denominator;
         }
@@ -19,8 +18,6 @@ functions {
 
     array[] real inv_additive_logistic(array[] real x){
         // transform from the k-simplex to R^{K-1}
-        // in binary case: positive numbers correspond to more probability
-        // mass on class 0, negative on class 1
         int new_len = dims(x)[1]-1;
         array[new_len] real transformed_arr;
         real last_element = x[new_len+1];
@@ -32,7 +29,17 @@ functions {
         return transformed_arr;
     }
 
+    vector temperature_scale(vector to_scale, real T, int K) {
+        vector[K] scaled;
+        real denominator = sum(exp(to_scale / T));
+        for (i in 1:K) {
+            scaled[i] = exp(to_scale[i]/T) / denominator;
+        }
+        return scaled;
+    }
+
     matrix onion(vector R2, vector l, int N) {
+        // https://discourse.mc-stan.org/t/nan-results-with-lkj-corr-cholesky/16832
         matrix[N,N] L;
         int start = 1;
         int end = 2;
@@ -51,25 +58,25 @@ functions {
         }
         return L;
     }
-
 }
 data {
-
+    // metadata
     int<lower=1> n_models;
     int<lower=1> n_humans;
     int<lower=1> n_items;
     int<lower=1> K; 
 
-    // model predictions: probabilities (\in a k-simplex)
-    array[n_items,n_models,K] real<lower=0,upper=1> Y_M;
-
-    // human predictions: votes (\in {1, ... K})
-    array[n_items,n_humans] int<lower=1,upper=K> Y_H;
-
+    // settings
+    int<lower=0, upper=1> use_temp_scaling;
     real<lower = 0> eta;
 
+    // model predictions (probabilities)
+    array[n_items,n_models,K] real<lower=0,upper=1> Y_M;
+    // human predictions (votes)
+    array[n_items,n_humans] int<lower=1,upper=K> Y_H;
 } 
 transformed data {
+    int N = (K-1)*(n_models + n_humans);
 
     array[n_items,n_models*(K-1)] real Z_M_arr;
     for (i in 1:n_items) {
@@ -84,34 +91,27 @@ transformed data {
     matrix[n_items, n_models*(K-1)] Z_M;
     Z_M = to_matrix(Z_M_arr);
 
-    int N = (K-1)*(n_models + n_humans);
-
     real<lower = 0> alpha = eta + (N - 2) / 2.0;
     vector<lower = 0>[N-1] shape1;
     vector<lower = 0>[N-1] shape2;
-
     shape1[1] = alpha;
     shape2[1] = alpha;
-    for(n in 2:(N-1)) {
+    for (n in 2:(N-1)) {
         alpha = alpha - 0.5;
         shape1[n] = n / 2.0;
         shape2[n] = alpha;
-  }
-
+    }
 }
 parameters { 
-
-    vector[choose(N, 2) - 1]  l;         // do NOT init with 0 for all elements
-    vector<lower = 0,upper = 1>[N-1] R2; // first element is not really a R^2 but is on (0,1)  
-
+    vector[choose(N, 2) - 1]  l;
+    vector<lower = 0,upper = 1>[N-1] R2;
     row_vector[N] mu;
+    real<lower=0> T;
     
-    // see https://mc-stan.org/docs/stan-users-guide/partially-known-parameters.html
+    // https://mc-stan.org/docs/stan-users-guide/partially-known-parameters.html
     matrix[n_items,n_humans*(K-1)] Z_H;
-
 }  
 transformed parameters {
-
     matrix[N,N] L_Sigma = onion(R2, l, N);
 
     matrix[n_items, N] Z;
@@ -123,14 +123,13 @@ transformed parameters {
             Z[i][k+(n_models*(K-1))] = Z_H[i][k];
         }
     }
-
 }
 model {
-
     // priors for parameters
     l ~ normal(0.0, 1.0);
     R2 ~ beta(shape1, shape2);
     mu ~ normal(0.0, 0.1);
+    T ~ normal(0, 0.4);
     
     // likelihood of latent scores
     for (i in 1:n_items){
@@ -147,19 +146,16 @@ model {
                 to_transform[k] = Z[i][ind+k];
             }
             Pmf = to_vector(additive_logistic(to_transform)); 
-            Y_H[i,j] ~ categorical(Pmf);
+            if (use_temp_scaling==1) {
+                Y_H[i,j] ~ categorical(temperature_scale(Pmf, T, K));
+            } else {
+                Y_H[i,j] ~ categorical(Pmf);
+            }
         }
     }
-
 }
 generated quantities {
-
     // covariance matrix
     matrix[N,N] Sigma;
     Sigma = multiply_lower_tri_self_transpose(L_Sigma);
-
-    // correlation matrix
-    // matrix[N,N] Omega;
-    // Omega = multiply_lower_tri_self_transpose(L_Omega);
-
 }

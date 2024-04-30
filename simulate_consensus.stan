@@ -1,9 +1,8 @@
 functions {
-
-    int i_in(int pos, array[] int pos_var) {
-        // if(i_in(3,{1,2,3,4})) will evaluate as 1
-        for (p in 1:(size(pos_var))) {
-            if (pos_var[p]==pos) {
+    int i_in(int search_val, array[] int search_arr) {
+        // return 1 if search_val is in search_arr else 0
+        for (p in 1:(size(search_arr))) {
+            if (search_arr[p]==search_val) {
                 return 1;
             } 
         }
@@ -25,23 +24,8 @@ functions {
         return ans;
     }
 
-    int argmax(array[] real x) {
-        // assumes values of x are > 0
-        real max_val = 0;
-        int max_ind = 0;
-        int len = dims(x)[1];
-        for (i in 1:len) {
-            if (x[i] > max_val) {
-                max_val = x[i];
-                max_ind = i;
-            }
-        }
-        return max_ind;
-    }
-
     int argmax_with_ties_rng(array[] real x) {
-        // return argmax, breaking ties randomly
-        // assumes values of x are > 0
+        // get argmax, break ties randomly (assumes values > 0)
         real max_val = 0;
         int num_maxs = 1;
         int len = dims(x)[1];
@@ -71,8 +55,7 @@ functions {
     }
 
     int mode_rng(array[] int x, int n) {
-        // assumes the possible values in x are integers 1, ... n
-        // randomly breaks ties
+        // get mode, break ties randomly (assumes values are ints 1, ..., n)
         array[n] real counts = rep_array(0, n);
         int len = dims(x)[1];
         for (i in 1:len){
@@ -87,9 +70,9 @@ functions {
         array[len+1] real transformed_arr;
         array[len] real exp_array = exp(x);
         real denominator = sum(exp_array)+1;
-        if (denominator == 0){
-            denominator = 0.000000001;
-        }
+        // if (denominator == 0){
+        //     denominator = 0.000000001;
+        // }
         for (i in 1:len){
             transformed_arr[i] = exp_array[i]/denominator;
         }
@@ -99,8 +82,6 @@ functions {
 
     array[] real inv_additive_logistic(array[] real x){
         // transform from the k-simplex to R^{K-1}
-        // in binary case: positive numbers correspond to more probability
-        // mass on class 0, negative on class 1
         int new_len = dims(x)[1]-1;
         array[new_len] real transformed_arr;
         real last_element = x[new_len+1];
@@ -112,9 +93,18 @@ functions {
         return transformed_arr;
     }
 
+    vector temperature_scale(vector to_scale, real T, int K) {
+        vector[K] scaled;
+        real denominator = sum(exp(to_scale / T));
+        for (i in 1:K) {
+            scaled[i] = exp(to_scale[i]/T) / denominator;
+        }
+        return scaled;
+    }
+
     array[] int expand_to_k(array[] int to_expand, int K) {
-        // convert an array of agent indicies to indicies over the full N
-        // e.g. for K = 3, N = 3: [1,3] -> [1,2,5,6] [2,1] -> [3,4,1,2]
+        // convert an array of agent indicies to agent + class-wise indicies
+        // e.g., for K = 3, N = 3: [1,3] -> [1,2,5,6] [2,1] -> [3,4,1,2]
         int n_agents = dims(to_expand)[1];
         array[n_agents*(K-1)] int expanded;
         int ind = 1;
@@ -127,8 +117,9 @@ functions {
         return expanded;
     }
 
-    matrix reorder_Sigma(matrix Sigma, array[] int new_order, int N){
-        // reorders corr matrix to follow new_order
+    matrix reorder_Sigma(matrix Sigma, array[] int new_order){
+        // reorders Sigma to follow new_order
+        int N = dims(new_order)[1];
         matrix[N,N] new_Sigma;
         for (i in 1:N){
             for (j in 1:N){
@@ -136,16 +127,6 @@ functions {
             }
         }
         return new_Sigma;
-    }
-
-    vector reorder_vector(vector to_reorder, array[] int new_order){
-        // reorders vector to follow new_order
-        int N = dims(new_order)[1];
-        vector[N] new_vector;
-        for (i in 1:N){
-            new_vector[i] = to_reorder[new_order[i]];
-        }
-        return new_vector;
     }
 
     vector reorder_row_vector(row_vector to_reorder, array[] int new_order){
@@ -159,27 +140,25 @@ functions {
     }
 }
 data {
-
+    // metadata
     int<lower=1> n_models;
     int<lower=1> n_humans;
     int<lower=1> n_items;
     int<lower=1> K; 
-
     int<lower=0> n_observed_humans;
-
-    // indices of humans that have not been observed (i.e. our candidates)
+    // indices of humans that have not been observed (candidates for querying)
     array[n_humans - n_observed_humans] int<lower=1, upper=n_humans> unobserved_ind;
 
-    // model predictions: probabilities (\in a k-simplex)
+    // settings
+    int<lower=0, upper=1> use_temp_scaling;
+
+    // model predictions (probabilities)
     array[n_models,K] real<lower=0,upper=1> Y_M_new;
-
-    // human predictions: votes (\in {1, ... K})
+    // human predictions (votes) (as reals, 0-length int arrays not supported)
     array[n_observed_humans] real<lower=1,upper=K> Y_O_real;
-
 } 
 transformed data {
-
-    // convert Y_O_real from real to int, because Stan doesn't support length-0 int arrays as data
+    // convert Y_O_real to ints
     array[n_observed_humans] int<lower=1,upper=K> Y_O;
     if (n_observed_humans > 0) {
         for (i in 1:n_observed_humans) {
@@ -201,7 +180,7 @@ transformed data {
     int N = (K-1)*(n_models + n_humans);
     int n_unobserved_humans = n_humans - n_observed_humans;
 
-    // arrays of true indices
+    // arrays of indices for convenience
     array[n_models] int model_ind;
     array[n_humans] int human_ind;
     array[n_observed_humans] int observed_true_ind;
@@ -231,28 +210,26 @@ parameters {
     // parameters from learn_underlying_normal (for compatibility)
     vector[choose(N, 2) - 1]  l; 
     vector<lower = 0,upper = 1>[N-1] R2; 
-
     row_vector[N] mu;
-    // see https://mc-stan.org/docs/stan-users-guide/partially-known-parameters.html
+    real<lower=0> T;
+
     matrix[n_items,n_humans*(K-1)] Z_H;
 
     matrix[N,N] L_Sigma;
     matrix[n_items, N] Z;
 }
 generated quantities {
-
     // covariance matrix
     matrix[N,N] Sigma;
     Sigma = multiply_lower_tri_self_transpose(L_Sigma);
 
-    // reorder mu and Sigma so that the unobserved (human) predictions come first
+    // reorder mu and Sigma so unobserved (human) predictions come first
     array[n_models + n_humans] int new_order = append_array(human_ind, model_ind); 
     array[N] int new_order_ind = expand_to_k(new_order, K);
     vector[N] mu_reordered = reorder_row_vector(mu, new_order_ind);
-    matrix[N,N] Sigma_reordered = reorder_Sigma(Sigma, new_order_ind, N);
+    matrix[N,N] Sigma_reordered = reorder_Sigma(Sigma, new_order_ind);
 
-
-    // create mu and Sigma for the conditional Gaussian | Z_M
+    // get mu' and Sigma' for the conditional Gaussian | Z_M
     vector[s1] mu_1 = segment(mu_reordered, 1, s1);
     vector[s2] mu_2 = segment(mu_reordered, s1 + 1, s2);
 
@@ -267,42 +244,53 @@ generated quantities {
     matrix[s1, s1] Sigma_cond;
     Sigma_cond = Sigma_11 - m_prod * Sigma_21;
 
-
     // draw Z_H from the conditional Gaussian | Z_M
     vector[s1] Z_H_draw = multi_normal_rng(mu_cond, Sigma_cond);
 
     // draw sampled votes for the unobserved humans Y_U | Z_U
     // also, record transformed Z_H for computing expected entropty
-    vector[n_humans*K] L_H;
+    // vector[n_humans*K] L_H;
     array[n_unobserved_humans] int<lower=1,upper=K> Y_U;
     int j = 1;
     for (i in 1:n_humans) {
         array[K-1] real Z_i = to_array_1d(segment(Z_H_draw, ((K-1)*(i-1))+1, K-1));
-        vector[K] Pmf = to_vector(additive_logistic(Z_i)); 
-        // record transformed Z_U
-        for (l_ind in 1:K) {
-            L_H[K*(i-1) + l_ind] = Pmf[l_ind];
+        vector[K] Pmf = to_vector(additive_logistic(Z_i));  
+        if (use_temp_scaling==1) {
+            Pmf = temperature_scale(Pmf, T, K);
         }
+        // record transformed Z_U
+        // for (l_ind in 1:K) {
+        //     L_H[K*(i-1) + l_ind] = Pmf[l_ind];
+        // }
         if (i_in(i, unobserved_ind)) {
             Y_U[j] = categorical_rng(Pmf);
             j += 1;
         }
     }
     
-    // get y_mode and likelihood of Y_O
+    // get y_mode and likelihood of Y_O | Z_O
     int<lower=1,upper=K> y_mode;
     real p_y_k = 1;
     if (n_observed_humans >= 1) {
-       // get mode of sampled Y_U and actual Y_O
-       array[n_humans] int Y_H = append_array(Y_O, Y_U);
-       y_mode = mode_rng(Y_H, K);
+        // get mode of sampled Y_U and actual Y_O
+        array[n_humans] int Y_H = append_array(Y_O, Y_U);
+        y_mode = mode_rng(Y_H, K);
 
-       // weight p_y_k by likelihood of Y_O | Z_O
+        // weight p_y_k by likelihood of Y_O | Z_O
+        int observed_count = 1;
         for (i in 1:n_humans) {
             if (i_in(i+n_models, observed_true_ind)) {
+                // vote of expert i
+                int Y_i = Y_O[observed_count];
+                // sampled confidence of expert i
                 array[K-1] real Z_i = to_array_1d(segment(Z_H_draw, (K-1)*(i-1)+1, K-1));
                 vector[K] Pmf = to_vector(additive_logistic(Z_i)); 
-                p_y_k *= Pmf[y_mode];
+                if (use_temp_scaling==1) {
+                    p_y_k *= temperature_scale(Pmf, T, K)[Y_i];
+                } else {
+                    p_y_k *= Pmf[Y_i];
+                }
+                observed_count +=1;
             }
         }
     } else {
@@ -310,7 +298,7 @@ generated quantities {
         y_mode = mode_rng(Y_U, K);
     }
 
-    // assign p_y_k to the correct element of p_y
+    // assign p_y_k to the corresponding element of p_y
     vector[K] p_y = rep_vector(0, K);
     p_y[y_mode] = p_y_k;
 }
