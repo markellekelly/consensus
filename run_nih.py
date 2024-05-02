@@ -33,18 +33,23 @@ def model_consensus(model, exp_dict, mvn_fit, id_str):
         previous_fit=mvn_fit,
         gq_output_dir=out_dir
     )
-    shutil.rmtree(out_dir)
-    return fit
+    return fit, out_dir
 
 
 def get_expert_choice_probabilities(mvn_fit, consensus_model, exp_dict):
     K = exp_dict["K"]
     candidates = exp_dict["unobserved_ind"]
-    current_fit = model_consensus(consensus_model, exp_dict, mvn_fit, "-ec")
+    current_fit, out_dir = model_consensus(
+        consensus_model, 
+        exp_dict, 
+        mvn_fit, 
+        "-ec"
+    )
     likelihood = current_fit.stan_variable("p_y_k")
     votes = [
         current_fit.stan_variable("Y_U")[:,e] for e in range(len(candidates))
     ]
+    shutil.rmtree(out_dir)
 
     num_votes = len(votes[0])
     probabilities_un = np.zeros((len(candidates), K))
@@ -93,7 +98,7 @@ def choose_expert(mvn_fit, consensus_model, dataset):
             print(hyp_dict)
 
             # get consensus distribution
-            hyp_fit = model_consensus(
+            hyp_fit, out_dir = model_consensus(
                 model=consensus_model, 
                 exp_dict=hyp_dict, 
                 mvn_fit=mvn_fit, 
@@ -102,6 +107,7 @@ def choose_expert(mvn_fit, consensus_model, dataset):
             consensus_dist_est = np.zeros(K)
             for m in range(K):
                 consensus_dist_est[m] = hyp_fit.stan_variable("p_y")[:,m].mean()
+            shutil.rmtree(out_dir)
             print([i/sum(consensus_dist_est) for i in consensus_dist_est])
 
             #probability candidate c chooses class j
@@ -152,18 +158,22 @@ def query_next_human(fit, consensus_model, dataset):
     print(exp_dict)
 
     sampled_consensus_dist = consensus_dist(fit, consensus_model, exp_dict)
+    print("SAMPLED CONSENSUS DIST:")
     print(sampled_consensus_dist)
+    uncertainty = 1 - max(sampled_consensus_dist)
     pred_y = np.argmax(sampled_consensus_dist) + 1
 
-    return pred_y
+    return pred_y, uncertainty
 
 def consensus_dist(mvn_fit, consensus_model, exp_dict):
     K = exp_dict["K"]
-    fit = model_consensus(consensus_model, exp_dict, mvn_fit, "-cd")
+    fit, out_dir = model_consensus(consensus_model, exp_dict, mvn_fit, "-cd")
     consensus_dist_est = np.zeros(K)
     for m in range(K):
         consensus_dist_est[m] = fit.stan_variable("p_y")[:,m].mean()
-    return consensus_dist_est
+    shutil.rmtree(out_dir)
+    consensus_dist_norm = consensus_dist_est/sum(consensus_dist_est)
+    return consensus_dist_norm
 
 
 def get_parameters(fit, n, interval=None):
@@ -199,7 +209,7 @@ def main():
     logger.disabled = True
 
     apply_TS = True
-    rerun_model = True
+    rerun_model = False
 
     n_items = 300
     chains = 3
@@ -245,103 +255,67 @@ def main():
     # exp_dict["L_Sigma"] = L_Sigma
     # exp_dict["mu"] = mu
 
-    # n_tests = 50*(n_humans + 1)
-    # total = 0; i=0
-    # correct = 0; random_correct = 0
-    # test_results = []; hybrid_results = []; random_results = []
+    n_tests = 50
+    i=0
+    test_results = []; random_results = []
 
-    # while total < n_tests:
+    uncertainty_threshold = 0.2
 
-    #     consensus = dataset.get_human_consensus(i)
+    while i < n_tests:
 
-    #     print('running test on row ' + str(i))
+        dataset.init_test(i)
+        consensus = dataset.get_human_consensus(i)
 
-    #     dataset.init_test(i)
+        print('running test on row ' + str(i))
 
-    #     random_candidate_experts = [i for i in range(n_humans)]
-    #     random_labels = []
-    #     test_result = []
-    #     hybrid_result = []
-    #     random_result = []
+        random_candidate_experts = [i for i in range(n_humans)]
+        random_labels = []
+        test_result = []
+        random_result = []
 
-    #     model_only_cd = consensus_dist(fit, consensus_model, dataset.get_test_dict())
-    #     pred_y = np.argmax(model_only_cd) + 1
-    #     naive_pred_y = dataset.get_model_prediction(i)
+        model_only_cd = consensus_dist(fit, consensus_model, dataset.get_test_dict())
+        uncertainty = 1 - max(model_only_cd)
 
-    #     if pred_y == consensus:
-    #         test_result.append(1)
-    #         hybrid_result.append(1)
-    #         correct += 1
-    #     else:
-    #         test_result.append(0)
-    #         hybrid_result.append(0)
-    #     if naive_pred_y == consensus:
-    #         random_result.append(1)
-    #         random_correct += 1
-    #     else:
-    #         random_result.append(0)
-    #     total+=1
+        pred_y = np.argmax(model_only_cd) + 1
+        naive_pred_y = dataset.get_model_prediction(i)
 
-    #     print('human labels: ' + str(dataset.Y_H_new[i]))
-    #     print("chosen:", pred_y)
-    #     print("random/model prediction:", naive_pred_y)
-    #     print("actual:", consensus)
+        test_result.append(1 if pred_y == consensus else 0)
+        random_result.append(1 if naive_pred_y == consensus else 0)
 
-    #     for _ in range(n_humans):
-    #         print("querying next human...")
-    
-    #         random_expert = np.random.choice(random_candidate_experts)
-    #         random_candidate_experts = [c for c in random_candidate_experts if c != random_expert]
-    #         random_labels.append(dataset.Y_H_new[i][random_expert])
+        print('human labels: ' + str(dataset.Y_H_new[i]))
+        print("chosen:", pred_y)
+        print("random/model prediction:", naive_pred_y)
+        print("actual:", consensus)
 
-    #         pred_y = query_next_human(fit, consensus_model, dataset)
+        while uncertainty > uncertainty_threshold:
+            print("querying next human...")
+            random_expert = np.random.choice(random_candidate_experts)
+            random_candidate_experts = [c for c in random_candidate_experts if c != random_expert]
+            random_labels.append(dataset.Y_H_new[i][random_expert])
 
-    #         #exp_dict_alt, hybrid_pred_y = query_random_human(fit, consensus_model, exp_dict_alt, human_labels)
+            pred_y, uncertainty = query_next_human(fit, consensus_model, dataset)
 
-    #         _, modes = get_consensus(random_labels)
-    #         naive_pred_y = np.random.choice(modes)
+            _, modes = get_consensus(random_labels)
+            naive_pred_y = np.random.choice(modes)
 
-    #         print("chosen:", pred_y)
-    #         #print("hybrid:", hybrid_pred_y)
-    #         print("random:", naive_pred_y)
-    #         print("actual:", consensus)
+            print("chosen:", pred_y)
+            print("random:", naive_pred_y)
+            print("actual:", consensus)
 
-    #         if pred_y == consensus:
-    #             test_result.append(1)
-    #             correct += 1
-    #         else:
-    #             test_result.append(0)
-    #         # if hybrid_pred_y == consensus:
-    #         #     hybrid_result.append(1)
-    #         # else:
-    #         #     hybrid_result.append(0)
-    #         if naive_pred_y == consensus:
-    #             random_result.append(1)
-    #             random_correct += 1
-    #         else:
-    #             random_result.append(0)
+            test_result.append(1 if pred_y == consensus else 0)
+            random_result.append(1 if naive_pred_y == consensus else 0)
 
-    #         total += 1
-
-    #     i+=1
+        i+=1
         
-    #     test_results.append(test_result)
-    #     random_results.append(random_result)
-    #     #hybrid_results.append(hybrid_result)
+        test_results.append(test_result)
+        random_results.append(random_result)
 
-    #     print("random accuracy = ", random_correct/total)
-    #     print("accuracy = ", correct/total)
+        unc_str = str(uncertainty_threshold)
+        random_df = pd.DataFrame(random_results)
+        random_df.to_csv("nih_results/random_results" + unc_str + ".csv")
 
-    #     ts_str = "-ts" if apply_TS else ""
-
-    #     random_df = pd.DataFrame(random_results)
-    #     random_df.to_csv("results/random_results" + ts_str + ".csv")
-
-    #     hybrid_df = pd.DataFrame(hybrid_results)
-    #     hybrid_df.to_csv("results/hybrid_results" + ts_str + ".csv")
-
-    #     test_df = pd.DataFrame(test_results)
-    #     test_df.to_csv("results/test_results" + ts_str + ".csv")
+        test_df = pd.DataFrame(test_results)
+        test_df.to_csv("nih_results/test_results" + unc_str + ".csv")
 
     print("completed testing")
 
