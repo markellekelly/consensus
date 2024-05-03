@@ -8,7 +8,6 @@ def get_consensus(arr):
         return None, modes
     return modes[0], modes
 
-
 def print_Sigma(df, n, q=None):
     corr_str = ""
     for i in range(1, n+1):
