@@ -75,7 +75,7 @@ class Example(abc.ABC):
     def get_hypothetical_stan_dict(self, human_index, vote):
         '''
         get stan data dictionary corresponding to observing a hypothetical 
-        expert/vote combination, without updating internal state
+        new expert/vote combination, without updating internal state
         '''
         unobserved_ind, Y_O_new = self.process_new_vote(human_index, vote)
         hypothetical_dict = self.get_stan_dict().copy()
@@ -108,7 +108,11 @@ class TestExample(Example):
         return self.Y_H[human_index-1]
 
 
-class Dataset:
+class Dataset(abc.ABC):
+    '''
+    A class corresponding to a dataset, including an initialization set
+    with model and human predictions.
+    '''
 
     def __init__(
         self, 
@@ -119,6 +123,16 @@ class Dataset:
         model_predictions,
         human_predictions
     ):
+        '''
+        `n_initialization_items`: number of examples from `model_predictions`
+            and `human_predictions` to use for initialization/warmup
+        `model_predictions`: list of lists of model predictions with shape
+            (total # of examples)*`n_models`*`n_classes`
+        `human_predictions`: list of human predictions with shape
+            (total # of examples)*n_humans, values in {1, ..., `n_classes`}
+        if the total number of examples is > than `n_initialization_items`, the 
+            remaining ("test") examples will be stored in `Y_M_new` and `Y_H_new`
+        '''
         self.n_models = n_models
         self.n_humans = n_humans
         self.n_items = n_initialization_items
@@ -130,15 +144,11 @@ class Dataset:
         self.base_dict = self.get_base_stan_dict()
         self.n = (self.n_models + self.n_humans)*(self.K - 1)
 
-    def get_human_consensus(self, i):
-        human_labels = self.Y_H_new[i]
-        consensus, _ = get_consensus(human_labels)
-        return consensus
-
-    def get_model_prediction(self, i):
-        return np.argmax(self.Y_M_new[i]) + 1
-
     def get_base_stan_dict(self):
+        '''
+        return a dictionary containing data needed for both the initialization
+        and consensus prediction models (in stan)
+        '''
         return {
             'n_models' : self.n_models,
             'n_humans' : self.n_humans,
@@ -148,6 +158,10 @@ class Dataset:
         }
 
     def get_init_stan_dict(self, eta=0.75):
+        '''
+        return a dictionary with the needed inputs for the underlying_normal
+        stan model, including hyperparameter `eta`
+        '''
         data_dict = {
             'Y_M' : self.Y_M,
             'Y_H' : self.Y_H,
@@ -156,11 +170,46 @@ class Dataset:
         data_dict.update(self.base_dict)
         return data_dict
 
-    def get_test_example(self, ind):
+    @abc.abstractmethod
+    def get_test_example(self, i):
+        '''
+        return an instance of an `Example` corresponding to index `i`
+        '''
+
+
+class TestDataset(Dataset):
+    '''
+    A class corresponding to a dataset with known human and model predictions
+    for the initialization and test sets
+    '''
+
+    def __init__(self, **args):
+        super().__init__(**args)
+
+    def get_human_consensus(self, i):
+        '''
+        return the expert consensus for test example `i`
+        '''
+        human_labels = self.Y_H_new[i]
+        consensus, _ = get_consensus(human_labels)
+        return consensus
+
+    def get_model_prediction(self, i):
+        '''
+        return the model prediction for test example `i`
+        '''
+        return np.argmax(self.Y_M_new[i]) + 1
+
+
+    def get_test_example(self, i):
+        '''
+        return a `TestExample` corresponding to test example `i`
+        '''
+
         return TestExample(
             base_dict = self.base_dict, 
             n_humans = self.n_humans,
-            model_predictions = self.Y_M_new[ind],
-            human_predictions = self.Y_H_new[ind]
+            model_predictions = self.Y_M_new[i],
+            human_predictions = self.Y_H_new[i]
         )
         

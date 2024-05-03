@@ -7,6 +7,9 @@ from scipy.stats import entropy
 from utils import get_consensus
 
 class ConsensusModel:
+    '''
+    A model for predicting consensus for a particular dataset.
+    '''
 
     def __init__(
         self, 
@@ -15,6 +18,15 @@ class ConsensusModel:
         stan_model,
         model_id
     ):
+        '''
+        `dataset`: instance of a `Dataset`
+        `mvn_fit`: stan fit with estimates of underlying normal
+            parameters, result of learn_underlying_normal.stan
+        `stan_model`: CmdStanModel instance for consensus prediction
+            (simulate_consensus.stan)
+        `model_id`: unique ID for this model run (to prevent conflicts
+            with stan temporary files)
+        '''
         self.dataset = dataset
         self.mvn_fit = mvn_fit
         self.stan_model = stan_model
@@ -22,6 +34,11 @@ class ConsensusModel:
         
 
     def model_consensus(self, stan_dict, id_str):
+        '''
+        fit a consensus model for the data in `stan_dict` in a unique
+        temporary directory with ending `id_str`. `out_dir` should be deleted
+        after needed quantities are extracted from `fit`
+        '''
         timestamp = str(time.time()).split(".")
         out_dir = "tmp/" + timestamp[0] + self.id + id_str
         fit = self.stan_model.generate_quantities(
@@ -31,8 +48,30 @@ class ConsensusModel:
         )
         return fit, out_dir
 
+    
+    def consensus_dist(self, stan_dict, id_str):
+        '''
+        compute and return the (normalized) distribution over the consensus y
+        for the data in `stan_dict` using `id_str` for the unique temporary
+        directory
+        '''
+
+        fit, out_dir = self.model_consensus(stan_dict, id_str)
+        consensus_dist_est = np.zeros(self.dataset.K)
+        for m in range(self.dataset.K):
+            consensus_dist_est[m] = fit.stan_variable("p_y")[:,m].mean()
+        shutil.rmtree(out_dir)
+        consensus_dist_norm = consensus_dist_est/sum(consensus_dist_est)
+
+        return consensus_dist_norm
+
 
     def get_expert_choice_probabilities(self, example):
+        '''
+        compute and return a (# of unobserved experts)*K matrix for `example`,
+        where entry i,j corresponds to the estimated probability that the ith
+        unobserved expert will choose class j
+        '''
         candidates = example.unobserved_ind
         current_fit, out_dir = self.model_consensus(
             example.get_stan_dict(), 
@@ -62,6 +101,11 @@ class ConsensusModel:
 
     
     def choose_expert(self, example):
+        '''
+        for a given `example`, for each unobserved expert, compute the expected
+        entropy of the consensus distribution after observing their vote and
+        return the index of the expert with the minimum expected entropy
+        '''
 
         candidate_ees = {}
 
@@ -100,19 +144,11 @@ class ConsensusModel:
         return chosen_expert
 
 
-    def consensus_dist(self, stan_dict, id_str):
-
-        fit, out_dir = self.model_consensus(stan_dict, id_str)
-        consensus_dist_est = np.zeros(self.dataset.K)
-        for m in range(self.dataset.K):
-            consensus_dist_est[m] = fit.stan_variable("p_y")[:,m].mean()
-        shutil.rmtree(out_dir)
-        consensus_dist_norm = consensus_dist_est/sum(consensus_dist_est)
-
-        return consensus_dist_norm
-
-
     def query_next_human(self, example):
+        '''
+        query the unobserved expert that minimizes expected entropy and
+        update the state of `example`
+        '''
     
         if len(example.unobserved_ind)>1:
             chosen_expert = self.choose_expert(example)
@@ -123,18 +159,25 @@ class ConsensusModel:
         example.update_with_query(chosen_expert)
 
 
-    def get_prediction(self, row_index, threshold):
+    def get_prediction(self, i, threshold):
+        '''
+        get the consensus prediction for test example `i`, querying human
+        experts until the % uncertainty falls below `threshold` (\in [0,1])
+        '''
 
-        example = self.dataset.get_test_example(row_index)
+        # create an `Example` for the test example at index `i` 
+        example = self.dataset.get_test_example(i)
+        num_queries = 0
 
         consensus_dist = self.consensus_dist(example.get_stan_dict(), 'cdm')
         uncertainty = 1 - max(consensus_dist)
 
         while uncertainty > threshold:
             # query new expert
+            num_queries += 1
             self.query_next_human(example)
             consensus_dist = self.consensus_dist(example.get_stan_dict(), 'cd')
             uncertainty = 1 - max(consensus_dist)
 
         pred_y = np.argmax(consensus_dist) + 1
-        return pred_y
+        return pred_y, num_queries

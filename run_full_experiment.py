@@ -7,9 +7,21 @@ import numpy as np
 import pandas as pd
 
 from utils import get_consensus, print_Sigma
-from dataset import Dataset
+from dataset import TestDataset
 from consensus_model import ConsensusModel
 
+
+def estimate_mvn_param(data_dict, chains, n_warmup, n_sampling):
+    stan_file = os.path.join(".", "learn_underlying_normal.stan")
+    model = CmdStanModel(stan_file=stan_file)
+    fit = model.sample(
+        data=data_dict, 
+        chains=chains, 
+        iter_warmup=n_warmup, 
+        iter_sampling=n_sampling, 
+        show_console=False
+    )
+    return fit
 
 def get_parameters(fit, n, interval=None):
     df = fit.draws_pd()
@@ -56,7 +68,8 @@ def query_n_random(dataset, n, i):
 
 def main():
 
-    dataset_name = "cifar" #"nih"
+    dataset_name = "nih" 
+    # dataset_name = "cifar"
 
     logger = logging.getLogger('cmdstanpy')
     logger.disabled = True
@@ -68,13 +81,13 @@ def main():
     n_warmup= 1500
     n_sampling= 2000
 
-    uncertainty_threshold = 0.18
+    uncertainty_threshold = 0.1
     eta = 0.75
 
     with open('data/{}.pickle'.format(dataset_name), 'rb') as handle:
         data_dict = pickle.load(handle)
 
-    dataset = Dataset(
+    dataset = TestDataset(
         n_models = data_dict['n_models'],
         n_humans = data_dict['n_humans'],
         n_classes = data_dict['K'],
@@ -115,11 +128,17 @@ def main():
         print('running test on row ' + str(i))
 
         true_consensus = dataset.get_human_consensus(i)
-        pred_y = consensus_model.get_prediction(i, uncertainty_threshold)
+        pred_y, n_queries = consensus_model.get_prediction(
+            i, 
+            uncertainty_threshold
+        )
         random_pred_y = query_n_random(dataset, n_random_queries, i)
 
-        results.append(1 if pred_y == true_consensus else 0)
-        random_results.append(1 if random_pred_y == true_consensus else 0)
+        result = 1 if pred_y == true_consensus else 0
+        random_result = 1 if random_pred_y == true_consensus else 0
+
+        results.append([n_queries, result])
+        random_results.append([n_random_queries, random_result])
 
         print('human labels: ' + str(dataset.Y_H_new[i]))
         print("chosen:", pred_y)
@@ -129,7 +148,7 @@ def main():
         unc_str = str(uncertainty_threshold)
 
         random_df = pd.DataFrame(random_results)
-        random_df.to_csv(results_save_dir+"random_results" + unc_str + ".csv")
+        random_df.to_csv(results_save_dir+"random_results" + str(n_random_queries) + ".csv")
         df = pd.DataFrame(results)
         df.to_csv(results_save_dir+"results" + unc_str + ".csv")
 
