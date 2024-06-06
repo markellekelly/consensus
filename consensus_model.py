@@ -4,7 +4,7 @@ import time
 import numpy as np
 from scipy.stats import entropy
 
-from utils import get_consensus
+from utils import get_consensus, print_Sigma
 
 class ConsensusModel:
     '''
@@ -49,20 +49,24 @@ class ConsensusModel:
         return fit, out_dir
 
     
-    def consensus_dist(self, stan_dict, id_str):
+    def consensus_dist(self, stan_dict, id_str, get_c_size=False):
         '''
         compute and return the (normalized) distribution over the consensus y
         for the data in `stan_dict` using `id_str` for the unique temporary
-        directory
+        directory. if `get_c_size`, also return the predicted consensus size.
         '''
 
         fit, out_dir = self.model_consensus(stan_dict, id_str)
         consensus_dist_est = np.zeros(self.dataset.K)
         for m in range(self.dataset.K):
             consensus_dist_est[m] = fit.stan_variable("p_y")[:,m].mean()
+        if get_c_size:
+            pred_consensus_size = fit.stan_variable("consensus_size").mean()
         shutil.rmtree(out_dir)
         consensus_dist_norm = consensus_dist_est/sum(consensus_dist_est)
 
+        if get_c_size:
+            return consensus_dist_norm, pred_consensus_size
         return consensus_dist_norm
 
 
@@ -114,14 +118,11 @@ class ConsensusModel:
 
         for c in example.unobserved_ind:
 
-            print('assessing candidate {}...'.format(c))
             expected_entropy = 0
 
             for j in range(1, self.dataset.K+1):
 
-                print('if they vote {}...'.format(j))
                 hyp_dict = example.get_hypothetical_stan_dict(c, j)
-                print(hyp_dict)
 
                 consensus_dist_est = self.consensus_dist(
                     stan_dict=hyp_dict,
@@ -130,7 +131,6 @@ class ConsensusModel:
 
                 #probability candidate c chooses class j
                 p_k = choice_probabilities[c_index][j-1]
-                print("{}% chance".format(p_k))
 
                 e = entropy(consensus_dist_est)
                 expected_entropy += p_k * e
@@ -139,8 +139,6 @@ class ConsensusModel:
             candidate_ees[c] = expected_entropy
 
         chosen_expert = min(candidate_ees, key=candidate_ees.get)
-        print("candidate ees:" + str(candidate_ees))
-        print("chose "+ str(chosen_expert))
         return chosen_expert
 
 
@@ -167,6 +165,7 @@ class ConsensusModel:
 
         # create an `Example` for the test example at index `i` 
         example = self.dataset.get_test_example(i)
+        true_consensus = self.dataset.get_human_consensus(i)
         num_queries = 0
 
         consensus_dist = self.consensus_dist(example.get_stan_dict(), 'cdm')
@@ -180,4 +179,72 @@ class ConsensusModel:
             uncertainty = 1 - max(consensus_dist)
 
         pred_y = np.argmax(consensus_dist) + 1
-        return pred_y, num_queries
+        result = {
+                'data_index' : i,
+                'n_queries' : num_queries,
+                'pred_y' : pred_y,
+                'uncertainty' : uncertainty,
+                'correct' : pred_y == true_consensus
+        }
+        return result, example.get_Y_H(), example.Y_M
+
+
+    def get_prediction_random_querying(self, i, threshold):
+        '''
+        get the consensus prediction for test example `i`, querying until
+        uncertainty falls below `threshold`, by randomly querying experts
+        '''
+
+        example = self.dataset.get_test_example(i)
+        true_consensus = self.dataset.get_human_consensus(i)
+        num_queries = 0
+
+        consensus_dist = self.consensus_dist(example.get_stan_dict(), 'cdm')
+        uncertainty = 1 - max(consensus_dist)
+
+        while uncertainty > threshold:
+            # query random expert
+            num_queries += 1
+            random_expert = np.random.choice(example.unobserved_ind)
+            stan_dict = example.update_with_query(random_expert)
+            consensus_dist = self.consensus_dist(stan_dict, 'cd')
+            uncertainty = 1 - max(consensus_dist)
+        
+        pred_y = np.argmax(consensus_dist) + 1
+        result = {
+                'data_index' : i,
+                'n_queries' : num_queries,
+                'pred_y' : pred_y,
+                'uncertainty' : uncertainty,
+                'correct' : pred_y == true_consensus
+        }
+        return result, example.get_Y_H(), example.Y_M
+
+
+    def get_prediction_simple_consensus(self, i, n_queries):
+        '''
+        predict consensus for example `i`, querying `n_queries` human
+        experts and using simple consensus to predict y (instead of the model)
+        '''
+
+        example = self.dataset.get_test_example(i)
+        true_consensus = self.dataset.get_human_consensus(i)
+
+        for q in range(n_queries):
+            num_queries += 1
+            self.query_next_human(example)
+
+        if n_queries == 0:
+            pred_y_options = [i for i in range(1,self.dataset.K+1)]
+        else:
+            _, pred_y_options = get_consensus(example.Y_O)
+        
+        pred_y = np.random.choice(pred_y_options)
+
+        result = {
+                'data_index' : i,
+                'n_queries' : num_queries,
+                'pred_y' : pred_y,
+                'correct' : pred_y == true_consensus
+        }
+        return result, example.get_Y_H(), example.Y_M

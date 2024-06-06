@@ -6,8 +6,8 @@ from utils import get_consensus
 
 class Example(abc.ABC):
     '''
-    Corresponds to a specific data instance. Keeps track of which experts have 
-    already been queried. To use, implement `query_expert`.
+    Corresponds to one input x^(t), keeping track of which experts have 
+    already been queried for that example. `query_expert` is abstract.
     '''
 
     def __init__(
@@ -31,11 +31,26 @@ class Example(abc.ABC):
         test_dict = {
             'Y_M_new' : self.Y_M,
             'Y_O_real' : self.Y_O,
+            'eta' : self.base_dict["eta"],
             'n_observed_humans' : self.n_observed_humans,
             'unobserved_ind' : self.unobserved_ind,
         }
         test_dict.update(self.base_dict)
         return test_dict
+
+    def get_Y_H(self):
+        '''
+        return a list of observed human votes, using 0 for unobserved
+        '''
+        Y_H = []
+        current_ind = 0
+        for i in range(1, self.n_humans+1):
+            if i in self.unobserved_ind:
+                Y_H.append(0)
+            else:
+                Y_H.append(self.Y_O[current_ind])
+                current_ind += 1
+        return Y_H
 
     def process_new_vote(self, human_index, vote):
         '''
@@ -56,7 +71,9 @@ class Example(abc.ABC):
     @abc.abstractmethod
     def query_expert(self, human_index):
         '''
-        get the vote of the expert at `human_index` (integer between 1,... K.)
+        get the vote of the `human_index`th expert (integer between 1,... K.)
+        input: int `human_index` \in {1,..., `self.n_humans`}
+        returns: int vote \in {1, ... K}
         '''
         pass
 
@@ -67,6 +84,7 @@ class Example(abc.ABC):
         '''
         self.n_observed_humans += 1
         query_result = self.query_expert(human_index)
+        # update status of observed and unobserved experts
         self.unobserved_ind, self.Y_O = self.process_new_vote(
             human_index, query_result
         )
@@ -118,31 +136,34 @@ class Dataset(abc.ABC):
         self, 
         n_models, 
         n_humans, 
-        n_initialization_items,
+        n_items,
         n_classes,
         model_predictions,
-        human_predictions
+        human_predictions,
+        use_temp_scaling = 1, 
+        eta = 0.75
     ):
         '''
-        `n_initialization_items`: number of examples from `model_predictions`
-            and `human_predictions` to use for initialization/warmup
+        `n_items`: number of already-observed examples
+            in `model_predictions` and `human_predictions`
         `model_predictions`: list of lists of model predictions with shape
             (total # of examples)*`n_models`*`n_classes`
         `human_predictions`: list of human predictions with shape
             (total # of examples)*n_humans, values in {1, ..., `n_classes`}
-        if the total number of examples is > than `n_initialization_items`, the 
-            remaining ("test") examples will be stored in `Y_M_new` and `Y_H_new`
+        `use_temp_scaling`: int (0 or 1) that controls whether the human
+            predictions should be calibrated via temperature scaling
+        `eta`: value for the eta hyperparameter 
         '''
         self.n_models = n_models
         self.n_humans = n_humans
-        self.n_items = n_initialization_items
+        self.n_items = n_items
         self.K = n_classes
-        self.Y_M = model_predictions[:n_initialization_items]
-        self.Y_H = human_predictions[:n_initialization_items]
-        self.Y_M_new = model_predictions[n_initialization_items:]
-        self.Y_H_new = human_predictions[n_initialization_items:]
+        self.Y_M = model_predictions
+        self.Y_H = human_predictions
         self.base_dict = self.get_base_stan_dict()
         self.n = (self.n_models + self.n_humans)*(self.K - 1)
+        self.use_temp_scaling = use_temp_scaling
+        self.eta = eta
 
     def get_base_stan_dict(self):
         '''
@@ -153,20 +174,17 @@ class Dataset(abc.ABC):
             'n_models' : self.n_models,
             'n_humans' : self.n_humans,
             'n_items' : self.n_items,
+            'eta' : self.eta,
             'K' : self.K,
-            'use_temp_scaling' : 1
+            'use_temp_scaling' : self.use_temp_scaling
         }
 
-    def get_init_stan_dict(self, eta=0.75):
+    def get_init_stan_dict(self):
         '''
         return a dictionary with the needed inputs for the underlying_normal
         stan model, including hyperparameter `eta`
         '''
-        data_dict = {
-            'Y_M' : self.Y_M,
-            'Y_H' : self.Y_H,
-            'eta' : eta,
-        }
+        data_dict = { 'Y_M' : self.Y_M, 'Y_H' : self.Y_H }
         data_dict.update(self.base_dict)
         return data_dict
 
@@ -180,10 +198,12 @@ class Dataset(abc.ABC):
 class TestDataset(Dataset):
     '''
     A class corresponding to a dataset with known human and model predictions
-    for the initialization and test sets
+    for some test set `model_predictions_test` and `human_predictions_test`
     '''
 
-    def __init__(self, **args):
+    def __init__(self, model_predictions_test, human_predictions_test, **args):
+        self.Y_M_new = model_predictions_test
+        self.Y_H_new = human_predictions_test
         super().__init__(**args)
 
     def get_human_consensus(self, i):

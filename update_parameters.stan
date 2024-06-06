@@ -37,27 +37,6 @@ functions {
         }
         return scaled;
     }
-
-    matrix onion(vector R2, vector l, int N) {
-        // https://discourse.mc-stan.org/t/nan-results-with-lkj-corr-cholesky/16832
-        matrix[N,N] L;
-        int start = 1;
-        int end = 2;
-
-        L[1,1] = 1.0;
-        L[2,1] = 2.0 * R2[1] - 1.0;
-        L[2,2] = sqrt(1.0 - square(L[2,1]));
-        for(k in 2:(N-1)) {
-            int kp1 = k + 1;
-            vector[k] l_row = segment(l, start, k);
-            real scale = sqrt(R2[k] / dot_self(l_row));
-            for(j in 1:k) L[kp1,j] = l_row[j] * scale;
-            L[kp1,kp1] = sqrt(1.0 - R2[k]);
-            start = end + 1;
-            end = start + k - 1;
-        }
-        return L;
-    }
 }
 data {
     // metadata
@@ -68,12 +47,13 @@ data {
 
     // settings
     int<lower=0, upper=1> use_temp_scaling;
+    int<lower=0, upper=1> use_correlations;
     real<lower = 0> eta;
 
     // model predictions (probabilities)
     array[n_items,n_models,K] real<lower=0,upper=1> Y_M;
-    // human predictions (votes)
-    array[n_items,n_humans] int<lower=1,upper=K> Y_H;
+    // human predictions (votes), 0 is missing
+    array[n_items,n_humans] int<lower=0,upper=K> Y_H;
 } 
 transformed data {
     int N = (K-1)*(n_models + n_humans);
@@ -90,21 +70,10 @@ transformed data {
     }
     matrix[n_items, n_models*(K-1)] Z_M;
     Z_M = to_matrix(Z_M_arr);
-
-    real<lower = 0> alpha = eta + (N - 2) / 2.0;
-    vector<lower = 0>[N-1] shape1;
-    vector<lower = 0>[N-1] shape2;
-    shape1[1] = alpha;
-    shape2[1] = alpha;
-    for (n in 2:(N-1)) {
-        alpha = alpha - 0.5;
-        shape1[n] = n / 2.0;
-        shape2[n] = alpha;
-    }
 }
 parameters { 
-    vector[choose(N, 2) - 1]  l;
-    vector<lower = 0,upper = 1>[N-1] R2;
+    vector<lower=0>[N] L_std;
+    cholesky_factor_corr[N] L_Omega;
     row_vector[N] mu;
     real<lower=0> T;
     
@@ -112,7 +81,13 @@ parameters {
     matrix[n_items,n_humans*(K-1)] Z_H;
 }  
 transformed parameters {
-    matrix[N,N] L_Sigma = onion(R2, l, N);
+    matrix[N, N] L_Sigma;
+    if (use_correlations==1) {
+        L_Sigma = diag_pre_multiply(L_std, L_Omega);
+    } else {
+        matrix[N, N] identity_mat = diag_matrix(rep_vector(1.0, N));
+        L_Sigma = diag_pre_multiply(L_std, identity_mat);
+    }
 
     matrix[n_items, N] Z;
     for (i in 1:n_items){
@@ -126,8 +101,8 @@ transformed parameters {
 }
 model {
     // priors for parameters
-    l ~ normal(0.0, 1.0);
-    R2 ~ beta(shape1, shape2);
+    L_std ~ normal(0, 1);
+    L_Omega ~ lkj_corr_cholesky(eta);
     mu ~ normal(0.0, 0.1);
     T ~ normal(0, 0.4);
     
@@ -139,17 +114,20 @@ model {
     // likelihood of (human) votes from latent scores
     for (i in 1:n_items){
         for (j in 1:n_humans){
-            vector[K] Pmf;
-            array[K-1] real to_transform;
-            int ind = (K-1) * (n_models + j - 1);
-            for (k in 1:K-1){
-                to_transform[k] = Z[i][ind+k];
-            }
-            Pmf = to_vector(additive_logistic(to_transform)); 
-            if (use_temp_scaling==1) {
-                Y_H[i,j] ~ categorical(temperature_scale(Pmf, T, K));
-            } else {
-                Y_H[i,j] ~ categorical(Pmf);
+            // skip missing observations
+            if (Y_H[i,j] != 0) {
+                vector[K] Pmf;
+                array[K-1] real to_transform;
+                int ind = (K-1) * (n_models + j - 1);
+                for (k in 1:K-1){
+                    to_transform[k] = Z[i][ind+k];
+                }
+                Pmf = to_vector(additive_logistic(to_transform)); 
+                if (use_temp_scaling==1) {
+                    Y_H[i,j] ~ categorical(temperature_scale(Pmf, T, K));
+                } else {
+                    Y_H[i,j] ~ categorical(Pmf);
+                }
             }
         }
     }

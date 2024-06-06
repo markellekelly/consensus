@@ -1,5 +1,8 @@
 # consensus
 
-- **model.stan** estimates the correlation matrix Sigma for Z (which contains Z_M, the transformed model class-wise probabilities, and Z_H, the transformed latent human class_wise probabilities).
-- **expert_inference.stan** computes the probabilities that each unobserved human's prediction will be correct (i.e., agree with the consensus), given already-observed model outputs Y_M_new and, if applicable, the already-observed human predictions Y_H_new. A simple heuristic for choosing the next expert is to choose the argmax of p_i_correct.
-- **test_full_model.py** contains an end-to-end workflow of the use of both stan models on a simple simulated example.
+- **dataset.py** contains the Dataset and Example classes, which store and manage the agent prediction data. The TestDataset class is used when all data is already available (and thus no actual querying needs to happen), e.g., for evaluating our model. An instance of Example (or TestExample) corresponds to a specific row of the dataset, and manages querying information, including keeping track of which experts have been queried.
+- **consensus_model.py**
+- **online.py** 
+- **offline.py**
+- **learn_underlying_normal.stan**
+- **simulate_consensus.stan**

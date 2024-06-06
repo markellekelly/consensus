@@ -70,9 +70,6 @@ functions {
         array[len+1] real transformed_arr;
         array[len] real exp_array = exp(x);
         real denominator = sum(exp_array)+1;
-        // if (denominator == 0){
-        //     denominator = 0.000000001;
-        // }
         for (i in 1:len){
             transformed_arr[i] = exp_array[i]/denominator;
         }
@@ -145,12 +142,17 @@ data {
     int<lower=1> n_humans;
     int<lower=1> n_items;
     int<lower=1> K; 
-    int<lower=0> n_observed_humans;
-    // indices of humans that have not been observed (candidates for querying)
-    array[n_humans - n_observed_humans] int<lower=1, upper=n_humans> unobserved_ind;
 
     // settings
     int<lower=0, upper=1> use_temp_scaling;
+    int<lower=0, upper=1> use_correlations;
+    real<lower=0> eta;
+
+    // additional metadata (not used in learn_underlying_normal)
+    int<lower=0> n_observed_humans;
+
+    // indices of humans that have not been observed (candidates for querying)
+    array[n_humans - n_observed_humans] int<lower=1, upper=n_humans> unobserved_ind;
 
     // model predictions (probabilities)
     array[n_models,K] real<lower=0,upper=1> Y_M_new;
@@ -208,13 +210,14 @@ transformed data {
 } 
 parameters {
     // parameters from learn_underlying_normal (for compatibility)
-    vector[choose(N, 2) - 1]  l; 
-    vector<lower = 0,upper = 1>[N-1] R2; 
+    vector<lower=0>[N] L_std;
+    matrix[N,N] L_Omega;
     row_vector[N] mu;
     real<lower=0> T;
 
     matrix[n_items,n_humans*(K-1)] Z_H;
 
+    //matrix[N,N] Omega;
     matrix[N,N] L_Sigma;
     matrix[n_items, N] Z;
 }
@@ -248,8 +251,6 @@ generated quantities {
     vector[s1] Z_H_draw = multi_normal_rng(mu_cond, Sigma_cond);
 
     // draw sampled votes for the unobserved humans Y_U | Z_U
-    // also, record transformed Z_H for computing expected entropty
-    // vector[n_humans*K] L_H;
     array[n_unobserved_humans] int<lower=1,upper=K> Y_U;
     int j = 1;
     for (i in 1:n_humans) {
@@ -258,10 +259,6 @@ generated quantities {
         if (use_temp_scaling==1) {
             Pmf = temperature_scale(Pmf, T, K);
         }
-        // record transformed Z_U
-        // for (l_ind in 1:K) {
-        //     L_H[K*(i-1) + l_ind] = Pmf[l_ind];
-        // }
         if (i_in(i, unobserved_ind)) {
             Y_U[j] = categorical_rng(Pmf);
             j += 1;
@@ -271,6 +268,7 @@ generated quantities {
     // get y_mode and likelihood of Y_O | Z_O
     int<lower=1,upper=K> y_mode;
     real p_y_k = 1;
+    int consensus_size = 0;
     if (n_observed_humans >= 1) {
         // get mode of sampled Y_U and actual Y_O
         array[n_humans] int Y_H = append_array(Y_O, Y_U);
@@ -279,6 +277,9 @@ generated quantities {
         // weight p_y_k by likelihood of Y_O | Z_O
         int observed_count = 1;
         for (i in 1:n_humans) {
+            if (Y_H[i]==y_mode) {
+                consensus_size +=1;
+            }
             if (i_in(i+n_models, observed_true_ind)) {
                 // vote of expert i
                 int Y_i = Y_O[observed_count];
@@ -296,6 +297,11 @@ generated quantities {
     } else {
         // get mode of Y_U
         y_mode = mode_rng(Y_U, K);
+        for (i in 1:n_unobserved_humans) {
+            if (Y_U[i]==y_mode) {
+                consensus_size +=1;
+            }
+        }
     }
 
     // assign p_y_k to the corresponding element of p_y
