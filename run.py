@@ -29,9 +29,10 @@ def estimate_mvn_param(data_dict, chains, n_warmup, n_sampling, id_str):
 
 def main():
 
-    # options:  "nih", "nih_noisy_model", "cifar", "cifar_alt46", "cifar_alt28"
-    #           "imagenet_m1", "imagenet_m2"
+    # options:  "nih", "cifar", "imagenet"
     dataset_name = "cifar"
+    # options: 0, 1 (for cifar also 2)
+    noisy = 0
 
     logger = logging.getLogger('cmdstanpy')
     logger.disabled = True
@@ -47,8 +48,11 @@ def main():
     fname = "fit_{}_{}_{}_{}".format(n_warmup, n_sampling, eta)
     results_save_dir = dataset_name + '_results/'
     model_id = dataset_name + '_' + fname + "_" + unique_id
-
-    with open('data/{}.pickle'.format(dataset_name), 'rb') as handle:
+    nois_str = "" if noisy == 0 else "_noisy"
+    if noisy == 2:
+        nois_str += "2"
+    data_file = 'data/{}/data{}.pickle'.format(dataset_name, nois_str)
+    with open(data_file, 'rb') as handle:
         data_dict = pickle.load(handle)
 
     results = []
