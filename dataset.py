@@ -139,14 +139,11 @@ class Dataset(abc.ABC):
         n_classes,
         model_predictions = [],
         human_predictions= [],
-        n_items = 0,
         use_temp_scaling = 1, 
         use_correlations = 1,
         eta = 0.75
     ):
         '''
-        `n_items`: number of already-observed examples
-            in `model_predictions` and `human_predictions`
         `model_predictions`: list of lists of model predictions with shape
             (total # of examples)*`n_models`*`n_classes`
         `human_predictions`: list of human predictions with shape
@@ -157,7 +154,7 @@ class Dataset(abc.ABC):
         '''
         self.n_models = n_models
         self.n_humans = n_humans
-        self.n_items = n_items
+        self.n_items = len(model_predictions)
         self.K = n_classes
         self.Y_M = model_predictions
         self.Y_H = human_predictions
@@ -191,6 +188,16 @@ class Dataset(abc.ABC):
         data_dict.update(self.base_dict)
         return data_dict
 
+    def update(self, example):
+        '''
+        update the observed dataset with a new example with model predictions
+        `Y_M_observed` and (potentially partial) expert votes `Y_H_observed`
+        '''
+        self.n_items += 1
+        self.Y_M.append(example.Y_M)
+        self.Y_H.append(example.get_Y_H())
+        self.base_dict = self.get_base_stan_dict()
+
     @abc.abstractmethod
     def get_test_example(self, i):
         '''
@@ -223,21 +230,18 @@ class TestDataset(Dataset):
         '''
         return np.argmax(self.Y_M_new[i]) + 1
 
-    def update(self, n_examples, Y_H_observed):
+    def update(self, example):
         '''
         move the first `n_examples` examples from the test set to our observed
         set, given the partially observed expert votes `Y_H_observed`
         '''
-        self.n_items += n_examples
-        self.Y_M.extend(self.Y_M_new[:n_examples])
-        self.Y_H.extend(Y_H_observed)
-        self.Y_M_new = self.Y_M_new[n_examples:]
-        self.Y_H_new = self.Y_H_new[n_examples:]
-        self.base_dict = self.get_base_stan_dict()
+        self.Y_M_new = self.Y_M_new[1:]
+        self.Y_H_new = self.Y_H_new[1:]
+        super().update(example)
 
     def get_test_example(self, i):
         '''
-        return a `TestExample` corresponding to test example `i`
+        create & return a `TestExample` corresponding to test example `i`
         '''
 
         return TestExample(

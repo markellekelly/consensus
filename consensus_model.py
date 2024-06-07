@@ -156,7 +156,8 @@ class ConsensusModel:
     def get_prediction(self, i, threshold):
         '''
         get the consensus prediction for test example `i`, querying human
-        experts until the % uncertainty falls below `threshold` (in [0,1])
+        experts until the % uncertainty falls below `threshold` (in [0,1]).
+        update `self.dataset` with the new observation
         '''
 
         # create an `Example` for the test example at index `i` 
@@ -174,6 +175,8 @@ class ConsensusModel:
             consensus_dist = self.consensus_dist(example.get_stan_dict(), 'cd')
             uncertainty = 1 - max(consensus_dist)
 
+        self.dataset.update(example)
+
         pred_y = np.argmax(consensus_dist) + 1
         result = {
                 'data_index' : i,
@@ -182,7 +185,7 @@ class ConsensusModel:
                 'uncertainty' : uncertainty,
                 'correct' : pred_y == true_consensus
         }
-        return result, example.get_Y_H(), example.Y_M
+        return result
 
 
     def get_prediction_random_querying(self, i, threshold):
@@ -214,7 +217,7 @@ class ConsensusModel:
                 'uncertainty' : uncertainty,
                 'correct' : pred_y == true_consensus
         }
-        return result, example.get_Y_H(), example.Y_M
+        return result, example.get_Y_H()
 
 
     def get_prediction_simple_consensus(self, i, n_queries):
@@ -243,4 +246,4 @@ class ConsensusModel:
                 'pred_y' : pred_y,
                 'correct' : pred_y == true_consensus
         }
-        return result, example.get_Y_H(), example.Y_M
+        return result, example.get_Y_H()
