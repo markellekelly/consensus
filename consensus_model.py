@@ -49,24 +49,20 @@ class ConsensusModel:
         return fit, out_dir
 
     
-    def consensus_dist(self, stan_dict, id_str, get_c_size=False):
+    def consensus_dist(self, stan_dict, id_str):
         '''
         compute and return the (normalized) distribution over the consensus y
         for the data in `stan_dict` using `id_str` for the unique temporary
-        directory. if `get_c_size`, also return the predicted consensus size.
+        directory.
         '''
 
         fit, out_dir = self.model_consensus(stan_dict, id_str)
         consensus_dist_est = np.zeros(self.dataset.K)
         for m in range(self.dataset.K):
             consensus_dist_est[m] = fit.stan_variable("p_y")[:,m].mean()
-        if get_c_size:
-            pred_consensus_size = fit.stan_variable("consensus_size").mean()
         shutil.rmtree(out_dir)
         consensus_dist_norm = consensus_dist_est/sum(consensus_dist_est)
 
-        if get_c_size:
-            return consensus_dist_norm, pred_consensus_size
         return consensus_dist_norm
 
 
@@ -160,7 +156,7 @@ class ConsensusModel:
     def get_prediction(self, i, threshold):
         '''
         get the consensus prediction for test example `i`, querying human
-        experts until the % uncertainty falls below `threshold` (\in [0,1])
+        experts until the % uncertainty falls below `threshold` (in [0,1])
         '''
 
         # create an `Example` for the test example at index `i` 

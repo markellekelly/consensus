@@ -72,8 +72,8 @@ class Example(abc.ABC):
     def query_expert(self, human_index):
         '''
         get the vote of the `human_index`th expert (integer between 1,... K.)
-        input: int `human_index` \in {1,..., `self.n_humans`}
-        returns: int vote \in {1, ... K}
+        input: int `human_index` in {1,..., `self.n_humans`}
+        returns: int vote in {1, ... K}
         '''
         pass
 
@@ -136,11 +136,12 @@ class Dataset(abc.ABC):
         self, 
         n_models, 
         n_humans, 
-        n_items,
         n_classes,
-        model_predictions,
-        human_predictions,
+        model_predictions = [],
+        human_predictions= [],
+        n_items = 0,
         use_temp_scaling = 1, 
+        use_correlations = 1,
         eta = 0.75
     ):
         '''
@@ -160,10 +161,11 @@ class Dataset(abc.ABC):
         self.K = n_classes
         self.Y_M = model_predictions
         self.Y_H = human_predictions
+        self.eta = eta
+        self.use_temp_scaling = use_temp_scaling
+        self.use_correlations = use_correlations
         self.base_dict = self.get_base_stan_dict()
         self.n = (self.n_models + self.n_humans)*(self.K - 1)
-        self.use_temp_scaling = use_temp_scaling
-        self.eta = eta
 
     def get_base_stan_dict(self):
         '''
@@ -176,7 +178,8 @@ class Dataset(abc.ABC):
             'n_items' : self.n_items,
             'eta' : self.eta,
             'K' : self.K,
-            'use_temp_scaling' : self.use_temp_scaling
+            'use_temp_scaling' : self.use_temp_scaling,
+            'use_correlations' : self.use_correlations
         }
 
     def get_init_stan_dict(self):
@@ -220,6 +223,17 @@ class TestDataset(Dataset):
         '''
         return np.argmax(self.Y_M_new[i]) + 1
 
+    def update(self, n_examples, Y_H_observed):
+        '''
+        move the first `n_examples` examples from the test set to our observed
+        set, given the partially observed expert votes `Y_H_observed`
+        '''
+        self.n_items += n_examples
+        self.Y_M.extend(self.Y_M_new[:n_examples])
+        self.Y_H.extend(Y_H_observed)
+        self.Y_M_new = self.Y_M_new[n_examples:]
+        self.Y_H_new = self.Y_H_new[n_examples:]
+        self.base_dict = self.get_base_stan_dict()
 
     def get_test_example(self, i):
         '''
