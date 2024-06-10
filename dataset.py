@@ -181,9 +181,11 @@ class Dataset(abc.ABC):
 
     def get_init_stan_dict(self):
         '''
-        return a dictionary with the needed inputs for the underlying_normal
+        return a dictionary with the needed inputs for the update_parameters
         stan model, including hyperparameter `eta`
         '''
+        self.n_items = len(self.Y_M)
+        self.base_dict = self.get_base_stan_dict()
         data_dict = { 'Y_M' : self.Y_M, 'Y_H' : self.Y_H }
         data_dict.update(self.base_dict)
         return data_dict
@@ -193,7 +195,8 @@ class Dataset(abc.ABC):
         update the observed dataset with a new example with model predictions
         `Y_M_observed` and (potentially partial) expert votes `Y_H_observed`
         '''
-        self.n_items += 1
+        # don't update `self.n_items` until `self.get_init_stan_dict()` so that
+        # n_items matches the last `update_parameters` run
         self.Y_M.append(example.Y_M)
         self.Y_H.append(example.get_Y_H())
         self.base_dict = self.get_base_stan_dict()

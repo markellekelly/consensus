@@ -45,7 +45,7 @@ def update_param(data_dict, chains, n_warmup, n_sampling, id_str):
 def main():
 
     # dataset options:  "nih", "cifar", "imagenet"
-    dataset_name = "cifar"
+    dataset_name = "nih"
     # noisy options: 0, 1 (for cifar also 2)
     noisy = 0
     n_tests = 250
@@ -118,10 +118,10 @@ def main():
                 )
                 i = 0 #; Y_H_observed = []
 
-            result = consensus_model.get_prediction(i, threshold)
-            # result = consensus_model.get_prediction_random_querying(i, threshold)
+            result = consensus_model.get_prediction(0, threshold)
+            # result = consensus_model.get_prediction_random_querying(0, threshold)
             result['threshold'] = threshold
-            result['data_index'] = t
+            result['data_index'] = t + start_point
             results.append(result)
             i += 1
 

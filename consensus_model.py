@@ -55,7 +55,6 @@ class ConsensusModel:
         for the data in `stan_dict` using `id_str` for the unique temporary
         directory.
         '''
-
         fit, out_dir = self.model_consensus(stan_dict, id_str)
         consensus_dist_est = np.zeros(self.dataset.K)
         for m in range(self.dataset.K):
@@ -208,6 +207,8 @@ class ConsensusModel:
             stan_dict = example.update_with_query(random_expert)
             consensus_dist = self.consensus_dist(stan_dict, 'cd')
             uncertainty = 1 - max(consensus_dist)
+
+        self.dataset.update(example)
         
         pred_y = np.argmax(consensus_dist) + 1
         result = {
@@ -217,7 +218,7 @@ class ConsensusModel:
                 'uncertainty' : uncertainty,
                 'correct' : pred_y == true_consensus
         }
-        return result, example.get_Y_H()
+        return result
 
 
     def get_prediction_simple_consensus(self, i, n_queries):
@@ -237,6 +238,8 @@ class ConsensusModel:
             pred_y_options = [i for i in range(1,self.dataset.K+1)]
         else:
             _, pred_y_options = get_consensus(example.Y_O)
+
+        self.dataset.update(example)
         
         pred_y = np.random.choice(pred_y_options)
 
@@ -246,4 +249,4 @@ class ConsensusModel:
                 'pred_y' : pred_y,
                 'correct' : pred_y == true_consensus
         }
-        return result, example.get_Y_H()
+        return result
