@@ -148,7 +148,7 @@ data {
     int<lower=0, upper=1> use_correlations;
     real<lower=0> eta;
 
-    // additional metadata (not used in learn_underlying_normal)
+    // additional metadata (not used in update_parameters)
     int<lower=0> n_observed_humans;
 
     // indices of humans that have not been observed (candidates for querying)
@@ -267,7 +267,6 @@ generated quantities {
     // get y_mode and likelihood of Y_O | Z_O
     int<lower=1,upper=K> y_mode;
     real p_y_k = 1;
-    int consensus_size = 0;
     if (n_observed_humans >= 1) {
         // get mode of sampled Y_U and actual Y_O
         array[n_humans] int Y_H = append_array(Y_O, Y_U);
@@ -276,9 +275,7 @@ generated quantities {
         // weight p_y_k by likelihood of Y_O | Z_O
         int observed_count = 1;
         for (i in 1:n_humans) {
-            if (Y_H[i]==y_mode) {
-                consensus_size +=1;
-            }
+    
             if (i_in(i+n_models, observed_true_ind)) {
                 // vote of expert i
                 int Y_i = Y_O[observed_count];
@@ -292,15 +289,11 @@ generated quantities {
                 }
                 observed_count +=1;
             }
+            
         }
     } else {
         // get mode of Y_U
         y_mode = mode_rng(Y_U, K);
-        for (i in 1:n_unobserved_humans) {
-            if (Y_U[i]==y_mode) {
-                consensus_size +=1;
-            }
-        }
     }
 
     // assign p_y_k to the corresponding element of p_y

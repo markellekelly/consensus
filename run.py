@@ -89,6 +89,7 @@ def main():
             model_predictions_test = data_dict['Y_M'][start_point:],
             human_predictions_test = data_dict['Y_H'][start_point:],
             use_temp_scaling = use_temp_scaling,
+            use_correlations = use_correlations,
             eta = eta
         )
 
