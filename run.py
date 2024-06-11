@@ -12,9 +12,9 @@ from dataset import TestDataset
 from consensus_model import ConsensusModel
 
 
-def get_fnames(dataset_name, noisy, unique_id, start_point, use_ts, use_corr):
+def get_fnames(dataset_name, noisy, start_point, use_ts, use_corr):
 
-    model_id = dataset_name + str(noisy) + '_fit_' + str(start_point) +unique_id
+    model_id = dataset_name + str(noisy) + '_fit_' + str(start_point)
     nois_str = "" if noisy == 0 else "_noisy"
     if noisy == 2:
         nois_str += "2"
@@ -45,11 +45,11 @@ def update_param(data_dict, chains, n_warmup, n_sampling, id_str):
 def main():
 
     # dataset options:  "nih", "cifar", "imagenet"
-    dataset_name = "nih"
+    dataset_name = "imagenet"
     # noisy options: 0, 1 (for cifar also 2)
     noisy = 0
     n_tests = 250
-    start_point = 0
+    start_point = 500
 
     chains = 3
     n_warmup= 1500
@@ -58,7 +58,6 @@ def main():
     eta = 0.75
     use_temp_scaling = 1
     use_correlations = 1
-    id_str = ''
 
     logger = logging.getLogger('cmdstanpy')
     logger.disabled = True
@@ -66,7 +65,6 @@ def main():
     data_file, results_path, id_ = get_fnames(
         dataset_name, 
         noisy, 
-        id_str,
         start_point,
         use_temp_scaling,
         use_correlations
@@ -81,9 +79,6 @@ def main():
     thresholds = [0, 0.01, 0.025, 0.05, 0.075, 0.1, 0.15, 0.2, 0.25, 0.3, 0.4, 0.5]
     thresholds = [0.4, 0.2, 0.1, 0.05, 0]
     for threshold in thresholds:
-
-        i = 1
-        out_dir = None
 
         dataset = TestDataset(
             n_models = data_dict['n_models'],
@@ -102,7 +97,7 @@ def main():
             # then every 10 until 100, then every 50
             if t < 20 or (t % 10 == 0 and t < 100) or (t % 50 == 0 and t < 250):
                 init_dict = dataset.get_init_stan_dict()
-                fit_new, out_dir = update_param(
+                fit_new, _ = update_param(
                         init_dict, 
                         chains, 
                         n_warmup, 
@@ -116,14 +111,12 @@ def main():
                     stan_model, 
                     id_+str(t)
                 )
-                i = 0 #; Y_H_observed = []
 
             result = consensus_model.get_prediction(0, threshold)
             # result = consensus_model.get_prediction_random_querying(0, threshold)
             result['threshold'] = threshold
             result['data_index'] = t + start_point
             results.append(result)
-            i += 1
 
             pd.DataFrame(results).to_csv(results_path)
 
