@@ -6,9 +6,6 @@ functions {
         array[len+1] real transformed_arr;
         array[len] real exp_array = exp(x);
         real denominator = sum(exp_array)+1;
-        // if (denominator == 0){
-        //     denominator = 0.000000001;
-        // }
         for (i in 1:len){
             transformed_arr[i] = exp_array[i]/denominator;
         }

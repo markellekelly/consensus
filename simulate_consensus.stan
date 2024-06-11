@@ -217,7 +217,6 @@ parameters {
 
     matrix[n_items,n_humans*(K-1)] Z_H;
 
-    //matrix[N,N] Omega;
     matrix[N,N] L_Sigma;
     matrix[n_items, N] Z;
 }
