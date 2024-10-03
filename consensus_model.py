@@ -21,7 +21,7 @@ class ConsensusModel:
         '''
         `dataset`: instance of a `Dataset`
         `mvn_fit`: stan fit with estimates of underlying normal
-            parameters, result of learn_underlying_normal.stan
+            parameters, result of update_parameters.stan
         `stan_model`: CmdStanModel instance for consensus prediction
             (simulate_consensus.stan)
         `model_id`: unique ID for this model run (to prevent conflicts
