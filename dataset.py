@@ -201,6 +201,16 @@ class Dataset(abc.ABC):
         self.Y_H.append(example.get_Y_H())
         self.base_dict = self.get_base_stan_dict()
 
+    def truncate(self, n):
+        '''
+        shorten `self.Y_M` and `self.Y_H` to the most recent `n` examples
+        (useful for sliding-window tests)
+        '''
+        self.Y_M = self.Y_M[-1*n:]
+        self.Y_H = self.Y_H[-1*n:]
+        self.n_items = n
+        self.base_dict = self.get_base_stan_dict()
+
     @abc.abstractmethod
     def get_test_example(self, i):
         '''

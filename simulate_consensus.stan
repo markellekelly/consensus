@@ -68,7 +68,12 @@ functions {
         // transform from R^{K-1} to the k-simplex
         int len = dims(x)[1];
         array[len+1] real transformed_arr;
-        array[len] real exp_array = exp(x);
+        // handle the case where elements of x are too large to exponentiate
+        array[len] real trunc_x;
+        for (i in 1:len){
+            trunc_x[i] = min([x[i], 10]);
+        }
+        array[len] real exp_array = exp(trunc_x);
         real denominator = sum(exp_array)+1;
         for (i in 1:len){
             transformed_arr[i] = exp_array[i]/denominator;
@@ -252,14 +257,16 @@ generated quantities {
     // draw sampled votes for the unobserved humans Y_U | Z_U
     array[n_unobserved_humans] int<lower=1,upper=K> Y_U;
     int j = 1;
+    vector[K] Pmf_draw;
     for (i in 1:n_humans) {
-        array[K-1] real Z_i = to_array_1d(segment(Z_H_draw, ((K-1)*(i-1))+1, K-1));
-        vector[K] Pmf = to_vector(additive_logistic(Z_i));  
+        array[K-1] real Z_i_draw = to_array_1d(segment(Z_H_draw, ((K-1)*(i-1))+1, K-1));
+        // to do: handle the case where Z_i is too big for the exponential in additive_logistic
+        Pmf_draw = to_vector(additive_logistic(Z_i_draw));  
         if (use_temp_scaling==1) {
-            Pmf = temperature_scale(Pmf, T, K);
+            Pmf_draw = temperature_scale(Pmf_draw, T, K);
         }
         if (i_in(i, unobserved_ind)) {
-            Y_U[j] = categorical_rng(Pmf);
+            Y_U[j] = categorical_rng(Pmf_draw);
             j += 1;
         }
     }
