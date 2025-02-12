@@ -137,11 +137,11 @@ class Dataset(abc.ABC):
         n_models, 
         n_humans, 
         n_classes,
+        use_temp_scaling, 
+        use_correlations,
+        eta,
         model_predictions = [],
-        human_predictions= [],
-        use_temp_scaling = 1, 
-        use_correlations = 1,
-        eta = 0.75
+        human_predictions= []
     ):
         '''
         `model_predictions`: list of lists of model predictions with shape
